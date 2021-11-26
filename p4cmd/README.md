@@ -1,6 +1,7 @@
 ### P4CMD 🌴
 
 A Python Perforce package that doesn't bring in any other packages to work. 
+Relies on p4cli installed on the system.
 
 ## p4cmd
 
