@@ -411,7 +411,6 @@ class P4Client(object):
         :param changelist: *string* or *int* changelist number or description. Will be made if it doesn't exist.*string* or *int* changelist number
         :return: *list* of info dictionaries
         """
-        changelist = self.__ensure_changelist(changelist)
 
         files_for_add = []
         files_for_checkout = []
@@ -419,6 +418,8 @@ class P4Client(object):
 
         p4files = self.files_to_p4files(file_list, allow_invalid_files=True)
         for p4file in p4files:
+            if p4file.is_checked_out():
+                continue
             if p4file.is_local_only():
                 files_for_add.append(p4file.get_local_file_path())
             elif p4file.get_depot_file_path() is not None:
@@ -507,7 +508,7 @@ class P4Client(object):
         :param case_sensitive: *bool*
         :return: *list* with changelist numbers as ints
         """
-        info_dicts = self.run_cmd2("changes", ["-s", "pending", "-u", self.user, "-c", self.client])
+        info_dicts = self.run_cmd2("changes", ["-l", "-s", "pending", "-u", self.user, "-c", self.client])
         changelists = []
 
         for info_dict in info_dicts:
