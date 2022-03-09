@@ -354,16 +354,20 @@ class P4Client(object):
         info_dicts = self.run_cmd2("sync", [] + cleaned_folder_list)
         return info_dicts
 
-    def sync_files(self, file_list=[], verify=True):
+    def sync_files(self, file_list=[], verify=True, force=False):
         """
         Syncs files
 
         :param file_list: *list*
         :param verify: *bool* if true, checks that file synced files exist on disk. Throws a warning if they don't
         This could happen when a synced file is deleted locally
+        :param force: *bool* force sync
         :return: *list* of info dicts
         """
-        info_dicts = self.run_cmd2("sync", [] + file_list)
+        file_list = file_list if isinstance(file_list, (list, tuple)) else [file_list]  # auto convert to list
+        initial_arg_list = ["-f"] if force else []
+
+        info_dicts = self.run_cmd2("sync", initial_arg_list + file_list)
 
         if verify:
             local_file_paths = self.get_local_paths(file_list)
@@ -517,7 +521,7 @@ class P4Client(object):
         :param case_sensitive: *bool*
         :return: *list* with changelist numbers as ints
         """
-        info_dicts = self.run_cmd2("changes", ["-l", "-s", "pending", "-u", self.user, "-c", self.client])
+        info_dicts = self.run_cmd2("changes", ["-s", "pending", "-u", self.user, "-c", self.client])
         changelists = []
 
         for info_dict in info_dicts:
@@ -606,9 +610,35 @@ class P4Client(object):
         :param paths: *list* of file paths
         :return: *list* of depot paths
         """
-        info_dicts = self.run_cmd2("where", paths)
+
+        # strip out revision specifier from paths
+        no_rev_paths = []
+        for path in paths:
+            path_without_ext, path_ext = os.path.splitext(path)
+            if "#" in path_ext:
+                path_ext = path_ext.split("#")[0]
+            no_rev_paths.append("{}{}".format(path_without_ext, path_ext))
+
+        info_dicts = self.run_cmd2("where", no_rev_paths)
         local_paths = [self.__get_dict_value(info, "path") for info in info_dicts]
         return local_paths
+
+    def get_history(self, paths):
+        """
+        Returns changes for the given paths
+
+        :param paths: *list* of file paths
+        :return: *list* of change info
+        """
+        info_dicts = []
+        for path in paths:
+            info_dicts.extend(self.run_cmd2("changes", ["-l", path]))
+
+        # decode from bytes
+        if sys.version_info.major > 2:
+            info_dicts = decode_dictionaries(info_dicts)
+
+        return info_dicts
 
     def host_online(self):
         """
@@ -766,6 +796,17 @@ def split_list_into_strings_of_length(input_list, max_length=100):
         clamped_str_list[-1] = new_str
 
     return clamped_str_list
+
+
+def decode_dictionaries(info_dicts):
+    """
+    Decode list of dictionary keys and values into unicode from bytes
+    """
+    decoded_dicts = []
+    for info_dict in info_dicts:
+        decoded_dict = {k.decode(): v.decode() for k, v in info_dict.items()}
+        decoded_dicts.append(decoded_dict)
+    return decoded_dicts
 
 
 class HostOnline(object):
