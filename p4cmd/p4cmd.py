@@ -521,7 +521,7 @@ class P4Client(object):
         :param case_sensitive: *bool*
         :return: *list* with changelist numbers as ints
         """
-        info_dicts = self.run_cmd2("changes", ["-s", "pending", "-u", self.user, "-c", self.client])
+        info_dicts = self.run_cmd2("changes", ["-l", "-s", "pending", "-u", self.user, "-c", self.client])
         changelists = []
 
         for info_dict in info_dicts:
