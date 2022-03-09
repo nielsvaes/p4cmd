@@ -416,8 +416,7 @@ class P4Client(object):
         :param changelist: *string* or *int* changelist number or description. Will be made if it doesn't exist.*string* or *int* changelist number
         :return: *list* of info dictionaries
         """
-        if not isinstance(file_list, list):
-            file_list = [file_list]
+        file_list = [file_list] if not isinstance(file_list, list) else file_list
 
         files_for_add = []
         files_for_checkout = []
@@ -425,7 +424,7 @@ class P4Client(object):
 
         p4files = self.files_to_p4files(file_list, allow_invalid_files=True)
         for p4file in p4files:
-            if not p4file.is_under_client_root():
+            if not p4file.is_under_client_root() and not self.silent:
                 raise Exception(p4file.get_raw_data())
             if p4file.is_checked_out():
                 continue
@@ -465,8 +464,7 @@ class P4Client(object):
         :param changelist: *string* or *int* changelist number or description. Will be made if it doesn't exist.
         :return: *list* of info dictionaries
         """
-        if not isinstance(file_list, list):
-            file_list = [file_list]
+        file_list = [file_list] if not isinstance(file_list, list) else file_list
         changelist = self.__ensure_changelist(changelist)
 
         info_dicts = self.run_cmd2("edit", ["-c", changelist] + file_list)
@@ -482,8 +480,7 @@ class P4Client(object):
         :param changelist:  *string* or *int* changelist number or description. Will be made if it doesn't exist.
         :return: *list* of info dictionaries
         """
-        if not isinstance(file_list, list):
-            file_list = [file_list]
+        file_list = [file_list] if not isinstance(file_list, list) else file_list
         changelist = self.__ensure_changelist(changelist)
 
         info_dicts = self.run_cmd2("add", ["-c", changelist] + file_list)
