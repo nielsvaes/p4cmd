@@ -98,6 +98,11 @@ class P4File(object):
             return True
         return False
 
+    def is_under_client_root(self):
+        if "is not under client's root" in self.__raw_data:
+            return False
+        return True
+
     def needs_syncing(self):
         if not self.is_deleted() and not self.is_moved_deleted():
             if not self.is_open_for_add() and not self.is_open_for_edit():
@@ -199,4 +204,3 @@ class P4File(object):
 
     def set_last_submitted_by(self, value):
         self.__last_submitted_by = value
-

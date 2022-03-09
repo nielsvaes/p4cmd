@@ -108,6 +108,7 @@ class P4Client(object):
             try:
                 while True:
                     value_dict = marshal.load(output)
+                    #dict_list.append(value_dict)
                     dict_list.append(value_dict)
             except EOFError:
                 pass
@@ -403,14 +404,16 @@ class P4Client(object):
 
         return files_and_cl
 
-    def add_or_edit_files(self, file_list=[], changelist="default"):
+    def add_or_edit_files(self, file_list=None, changelist="default"):
         """
         Marks the files in file_list for add if they are new, or edit if they are already versioned
 
-        :param file_list: *list*
+        :param file_list: *list* (ideally)
         :param changelist: *string* or *int* changelist number or description. Will be made if it doesn't exist.*string* or *int* changelist number
         :return: *list* of info dictionaries
         """
+        if not isinstance(file_list, list):
+            file_list = [file_list]
 
         files_for_add = []
         files_for_checkout = []
@@ -418,6 +421,8 @@ class P4Client(object):
 
         p4files = self.files_to_p4files(file_list, allow_invalid_files=True)
         for p4file in p4files:
+            if not p4file.is_under_client_root():
+                raise Exception(p4file.get_raw_data())
             if p4file.is_checked_out():
                 continue
             if p4file.is_local_only():
@@ -448,7 +453,7 @@ class P4Client(object):
                 return int(self.__get_dict_value(info_dict, "change"))
         return -1
 
-    def edit_files(self, file_list=[], changelist="default"):
+    def edit_files(self, file_list=None, changelist="default"):
         """
         Marks the files in file_list for edit
 
@@ -456,6 +461,8 @@ class P4Client(object):
         :param changelist: *string* or *int* changelist number or description. Will be made if it doesn't exist.
         :return: *list* of info dictionaries
         """
+        if not isinstance(file_list, list):
+            file_list = [file_list]
         changelist = self.__ensure_changelist(changelist)
 
         info_dicts = self.run_cmd2("edit", ["-c", changelist] + file_list)
@@ -464,13 +471,15 @@ class P4Client(object):
                 print(self.__get_dict_value(info_dict, "data"))
         return info_dicts
 
-    def add_files(self, file_list=[], changelist="default"):
+    def add_files(self, file_list=None, changelist="default"):
         """
         Marks the files in file_list for add
         :param file_list: *list*
         :param changelist:  *string* or *int* changelist number or description. Will be made if it doesn't exist.
         :return: *list* of info dictionaries
         """
+        if not isinstance(file_list, list):
+            file_list = [file_list]
         changelist = self.__ensure_changelist(changelist)
 
         info_dicts = self.run_cmd2("add", ["-c", changelist] + file_list)
