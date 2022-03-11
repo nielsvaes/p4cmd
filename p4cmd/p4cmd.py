@@ -196,6 +196,10 @@ class P4Client(object):
         else:
             p4files = []
             for file_path in file_list:
+                # Check we have a valid file path before checking out
+                if not os.path.exists(file_path):
+                    print('skipping')
+                    continue
                 perforce_file = P4File()
                 perforce_file.set_local_file_path(file_path)
                 perforce_file.set_status(Status.UNKNOWN)
@@ -317,18 +321,21 @@ class P4Client(object):
         :return: *list* of info dictionaries
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        if not self.silent: self.__validate_file_list(file_list)
         info_dicts = self.run_cmd2("revert", file_list)
         return info_dicts
 
-    def revert_folders(self, folder_list=[]):
+    def revert_folders(self, folder_list):
         """
         Recursively reverts complete folders
 
         :param folder_list: *list* folder paths
         :return: *list* of info dicts
         """
-        cleaned_folder_list = []
+        folder_list = convert_to_list(folder_list) if not isinstance(folder_list, list) else folder_list
+        if not self.silent: self.__validate_file_list(folder_list)
 
+        cleaned_folder_list = []
         for folder in folder_list:
             folder = folder.replace("\\", "/")
             folder = folder.rstrip("/")
@@ -338,15 +345,25 @@ class P4Client(object):
         info_dicts = self.run_cmd2("revert", [] + cleaned_folder_list)
         return info_dicts
 
-    def sync_folders(self, folder_list=[]):
+    def revert_changelist(self, changelist="default"):
+        """
+        Reverts all files in a given changelist
+        :param changelist: string or int value
+        """
+        files = self.get_files_in_changelist(changelist)
+        self.revert_files(files)
+
+    def sync_folders(self, folder_list):
         """
         Recursively syncs complete folders
 
         :param folder_list: *list* folder paths
         :return: *list* of info dicts
         """
-        cleaned_folder_list = []
+        folder_list = convert_to_list(folder_list) if not isinstance(folder_list, list) else folder_list
+        if not self.silent: self.__validate_file_list(folder_list)
 
+        cleaned_folder_list = []
         for folder in folder_list:
             folder = folder.replace("\\", "/")
             folder = folder.rstrip("/")
@@ -368,6 +385,7 @@ class P4Client(object):
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
         initial_arg_list = ["-f"] if force else []
+        if not self.silent: self.__validate_file_list(file_list)
 
         info_dicts = self.run_cmd2("sync", initial_arg_list + file_list)
 
@@ -389,8 +407,20 @@ class P4Client(object):
         :return: *list* of info dictionaries
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        if not self.silent: self.__validate_file_list(file_list)
         info_dicts = self.run_cmd2("delete", ["-c", changelist] + file_list)
         return info_dicts
+
+    def delete_changelist(self, changelist="default", perfect_match_only=False, case_sensitive=False):
+        """
+        Deletes a changelist via cl num or description
+        :param changelist:
+        :return:
+        """
+        cl_num = self.get_pending_changelists(changelist, perfect_match_only, case_sensitive)
+        for cl in cl_num:
+            info_dicts = self.run_cmd2('change', ['-d', cl])
+            # TODO: Break down info dicts and look for errors
 
     def get_shelved_files(self):
         """
@@ -420,6 +450,7 @@ class P4Client(object):
         :return: *list* of info dictionaries
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        if not self.silent: self.__validate_file_list(file_list)
 
         files_for_add = []
         files_for_checkout = []
@@ -427,8 +458,6 @@ class P4Client(object):
 
         p4files = self.files_to_p4files(file_list, allow_invalid_files=True)
         for p4file in p4files:
-            if not p4file.is_under_client_root() and not self.silent:
-                raise Exception(p4file.get_raw_data())
             if p4file.is_checked_out():
                 continue
             if p4file.is_local_only():
@@ -468,6 +497,8 @@ class P4Client(object):
         :return: *list* of info dictionaries
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        if not self.silent: self.__validate_file_list(file_list)
+
         changelist = self.__ensure_changelist(changelist)
 
         info_dicts = self.run_cmd2("edit", ["-c", changelist] + file_list)
@@ -484,6 +515,8 @@ class P4Client(object):
         :return: *list* of info dictionaries
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        if not self.silent: self.__validate_file_list(file_list)
+
         changelist = self.__ensure_changelist(changelist)
 
         info_dicts = self.run_cmd2("add", ["-c", changelist] + file_list)
@@ -765,6 +798,21 @@ class P4Client(object):
             last_dir = current_dir
             current_dir = os.path.abspath(current_dir + os.path.sep + os.pardir)
         return False
+
+    def __validate_file_list(self, file_list):
+        """
+        Validation function to ensure correct files are being synced to correct workspaces & clients etc.
+        Is an extendable function
+        :param file_list: List of files to iterate
+        :return:
+        """
+        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+
+        # Easy utility to check that the file is underneath the correct perforce root
+        # Quicker than waiting for the result of a p4 fstat
+        for f in file_list:
+            if not f.lower().startswith(self.perforce_root.lower()):
+                raise Exception(f'{f} is not under perforce root: {self.perforce_root}')
 
 
 def split_list_into_strings_of_length(input_list, max_length=100):
