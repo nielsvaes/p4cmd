@@ -187,7 +187,7 @@ class P4Client(object):
         marked for delete
         :return: *list* P4Files
         """
-        file_list = [file_list] if not isinstance(file_list, list) else file_list
+        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
 
         if self.host_online():
             fstat_output = self.run_cmd2("fstat", file_list)
@@ -281,6 +281,8 @@ class P4Client(object):
         :param changelist: *string* or *int* changelist description or changelist number
         :return: *list* of info dictionaries
         """
+        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+
         changelist = self.__ensure_changelist(changelist)
 
         info_dicts = self.run_cmd2("reopen", ["-c", changelist] + file_list)
@@ -314,6 +316,7 @@ class P4Client(object):
         :param file_list: *list* files
         :return: *list* of info dictionaries
         """
+        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
         info_dicts = self.run_cmd2("revert", file_list)
         return info_dicts
 
@@ -353,7 +356,7 @@ class P4Client(object):
         info_dicts = self.run_cmd2("sync", [] + cleaned_folder_list)
         return info_dicts
 
-    def sync_files(self, file_list=[], verify=True, force=False):
+    def sync_files(self, file_list, verify=True, force=False):
         """
         Syncs files
 
@@ -363,7 +366,7 @@ class P4Client(object):
         :param force: *bool* force sync
         :return: *list* of info dicts
         """
-        file_list = file_list if isinstance(file_list, (list, tuple)) else [file_list]  # auto convert to list
+        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
         initial_arg_list = ["-f"] if force else []
 
         info_dicts = self.run_cmd2("sync", initial_arg_list + file_list)
@@ -377,7 +380,7 @@ class P4Client(object):
 
         return info_dicts
 
-    def delete_files(self, file_list=[], changelist="default"):
+    def delete_files(self, file_list, changelist="default"):
         """
         Marks files for delete
 
@@ -385,6 +388,7 @@ class P4Client(object):
         :param changelist: *string* or *int* changelist number
         :return: *list* of info dictionaries
         """
+        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
         info_dicts = self.run_cmd2("delete", ["-c", changelist] + file_list)
         return info_dicts
 
@@ -407,14 +411,15 @@ class P4Client(object):
 
         return files_and_cl
 
-    def add_or_edit_files(self, file_list=[], changelist="default"):
+    def add_or_edit_files(self, file_list, changelist="default"):
         """
         Marks the files in file_list for add if they are new, or edit if they are already versioned
 
-        :param file_list: *list*
+        :param file_list: *list* (ideally)
         :param changelist: *string* or *int* changelist number or description. Will be made if it doesn't exist.*string* or *int* changelist number
         :return: *list* of info dictionaries
         """
+        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
 
         files_for_add = []
         files_for_checkout = []
@@ -422,6 +427,8 @@ class P4Client(object):
 
         p4files = self.files_to_p4files(file_list, allow_invalid_files=True)
         for p4file in p4files:
+            if not p4file.is_under_client_root() and not self.silent:
+                raise Exception(p4file.get_raw_data())
             if p4file.is_checked_out():
                 continue
             if p4file.is_local_only():
@@ -452,7 +459,7 @@ class P4Client(object):
                 return int(self.__get_dict_value(info_dict, "change"))
         return -1
 
-    def edit_files(self, file_list=[], changelist="default"):
+    def edit_files(self, file_list, changelist="default"):
         """
         Marks the files in file_list for edit
 
@@ -460,6 +467,7 @@ class P4Client(object):
         :param changelist: *string* or *int* changelist number or description. Will be made if it doesn't exist.
         :return: *list* of info dictionaries
         """
+        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
         changelist = self.__ensure_changelist(changelist)
 
         info_dicts = self.run_cmd2("edit", ["-c", changelist] + file_list)
@@ -468,13 +476,14 @@ class P4Client(object):
                 print(self.__get_dict_value(info_dict, "data"))
         return info_dicts
 
-    def add_files(self, file_list=[], changelist="default"):
+    def add_files(self, file_list, changelist="default"):
         """
         Marks the files in file_list for add
         :param file_list: *list*
         :param changelist:  *string* or *int* changelist number or description. Will be made if it doesn't exist.
         :return: *list* of info dictionaries
         """
+        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
         changelist = self.__ensure_changelist(changelist)
 
         info_dicts = self.run_cmd2("add", ["-c", changelist] + file_list)
@@ -798,6 +807,14 @@ def decode_dictionaries(info_dicts):
         decoded_dict = {k.decode(): v.decode() for k, v in info_dict.items()}
         decoded_dicts.append(decoded_dict)
     return decoded_dicts
+
+
+def convert_to_list(value):
+    if isinstance(value, tuple):
+        converted = [v for v in value]
+    else:
+        converted = [value]
+    return converted
 
 
 class HostOnline(object):
