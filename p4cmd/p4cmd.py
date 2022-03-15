@@ -192,7 +192,7 @@ class P4Client(object):
         # Making sure the filepath exists before we try to run any kind of p4 operation on them
         file_list = list()
         for fpath in _file_list:
-            if os.path.exists(fpath):
+            if not os.path.exists(fpath):
                 logging.info(f'{fpath} does not exist on disk. Cannot create p4 file object from it')
                 file_list.append(fpath)
 
