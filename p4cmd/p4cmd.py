@@ -187,7 +187,14 @@ class P4Client(object):
         marked for delete
         :return: *list* P4Files
         """
-        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        _file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+
+        # Making sure the filepath exists before we try to run any kind of p4 operation on them
+        file_list = list()
+        for fpath in _file_list:
+            if os.path.exists(fpath):
+                logging.info(f'{fpath} does not exist on disk. Cannot create p4 file object from it')
+                file_list.append(fpath)
 
         if self.host_online():
             fstat_output = self.run_cmd2("fstat", file_list)
@@ -196,10 +203,6 @@ class P4Client(object):
         else:
             p4files = []
             for file_path in file_list:
-                # Check we have a valid file path before checking out
-                if not os.path.exists(file_path):
-                    print('skipping')
-                    continue
                 perforce_file = P4File()
                 perforce_file.set_local_file_path(file_path)
                 perforce_file.set_status(Status.UNKNOWN)
