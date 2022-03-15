@@ -189,12 +189,16 @@ class P4Client(object):
         """
         _file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
 
-        # Making sure the filepath exists before we try to run any kind of p4 operation on them
+        # Convert what we have as local paths first
+        local_paths = self.get_local_paths(_file_list)
+
         file_list = list()
-        for fpath in _file_list:
-            if not os.path.exists(fpath):
-                logging.info(f'{fpath} does not exist on disk. Cannot create p4 file object from it')
-                file_list.append(fpath)
+        # Making sure the filepath exists before we try to run any kind of p4 operation on them
+        for local in local_paths:
+            if not os.path.exists(local):
+                logging.info(f'{local} does not exist on disk. Cannot create p4 file object from it')
+                continue
+            file_list.append(local.replace('\\', '/'))
 
         if self.host_online():
             fstat_output = self.run_cmd2("fstat", file_list)
