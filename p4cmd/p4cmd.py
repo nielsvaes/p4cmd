@@ -234,7 +234,7 @@ class P4Client(object):
                         if not complete_file_path in files:
                             all_files.append(complete_file_path)
             else:
-                all_files = [file for file in os.listdir(folder) if os.isfile(os.join(folder, file))]
+                all_files = [os.path.join(folder, file) for file in os.listdir(folder) if os.path.isfile(os.path.join(folder, file))]
 
             return self.files_to_p4files(all_files)
 
@@ -438,6 +438,29 @@ class P4Client(object):
                     files_and_cl.append([depot_file, changelist])
 
         return files_and_cl
+
+    def add_or_edit_folders(self, folders, include_subfolders=True, changelist="default"):
+        """
+        Marks a folder for add or edit
+
+        :param folders: *list* or *string*
+        :param include_subfolders: *bool*
+        :param changelist: *string* or *int* changelist number or description. Will be made if it doesn't exist.*string* or *int* changelist number
+        """
+        folders = convert_to_list(folders) if not isinstance(folders, list) else folders
+
+        all_files = []
+        for folder in folders:
+            if include_subfolders:
+                for root, dirs, files in os.walk(folder):
+                    for file_name in files:
+                        complete_file_path = os.path.join(root, file_name)
+                        if not complete_file_path in files:
+                            all_files.append(complete_file_path)
+            else:
+                all_files.extend([os.path.join(folder, file) for file in os.listdir(folder) if os.path.isfile(os.path.join(folder, file))])
+
+        self.add_or_edit_files(all_files, changelist=changelist)
 
     def add_or_edit_files(self, file_list, changelist="default"):
         """
@@ -853,7 +876,6 @@ def decode_dictionaries(info_dicts):
         decoded_dict = {k.decode(): v.decode() for k, v in info_dict.items()}
         decoded_dicts.append(decoded_dict)
     return decoded_dicts
-
 
 def convert_to_list(value):
     if isinstance(value, tuple):
