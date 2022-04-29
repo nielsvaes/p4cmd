@@ -282,9 +282,7 @@ class P4Client(object):
         :return: *list* of info dictionaries
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
-
         changelist = self.__ensure_changelist(changelist)
-
         info_dicts = self.run_cmd2("reopen", ["-c", changelist] + file_list)
 
         for info_dict in info_dicts:
@@ -369,17 +367,22 @@ class P4Client(object):
         info_dicts = self.run_cmd2("sync", [] + cleaned_folder_list)
         return info_dicts
 
-    def sync_files(self, file_list, verify=True, force=False):
+    def sync_files(self, file_list, revision=-1, verify=True, force=False):
         """
         Syncs files
 
         :param file_list: *list*
         :param verify: *bool* if true, checks that file synced files exist on disk. Throws a warning if they don't
         This could happen when a synced file is deleted locally
+        :param revision: *int* if -1, get latest, else get revision number
         :param force: *bool* force sync
         :return: *list* of info dicts
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        if revision != -1:
+            verify = False
+            file_list = [f"{path}#{revision}" for path in file_list]
+
         initial_arg_list = ["-f"] if force else []
         if not self.silent: self.__validate_file_list(file_list)
 
@@ -389,8 +392,7 @@ class P4Client(object):
             local_file_paths = self.get_local_paths(file_list)
             for local_file_path in local_file_paths:
                 if not os.path.isfile(local_file_path):
-                    logging.warning("File didn't exist after syncing, try force syncing it instead: %s" %
-                                    local_file_path)
+                    logging.warning(f"File didn't exist after syncing, try force syncing it instead: {local_file_path}")
 
         return info_dicts
 
