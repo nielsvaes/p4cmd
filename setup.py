@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="p4cmd",
-    version="1.2.0",
+    version="1.2.1",
     author="Niels Vaes",
     license='MIT',
     author_email="nielsvaes@gmail.com",

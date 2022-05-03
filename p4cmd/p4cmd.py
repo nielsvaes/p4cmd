@@ -307,16 +307,22 @@ class P4Client(object):
             return True
         return False
 
-    def revert_files(self, file_list):
+    def revert_files(self, file_list, unchanged_only=False):
         """
         Reverts files in file_list
 
         :param file_list: *list* files
+        :param unchanged_only: *bool*
         :return: *list* of info dictionaries
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
-        if not self.silent: self.__validate_file_list(file_list)
-        info_dicts = self.run_cmd2("revert", file_list)
+        if not self.silent:
+            self.__validate_file_list(file_list)
+        if unchanged_only:
+            info_dicts = self.run_cmd2("revert", ["-a"], file_list)
+        else:
+            info_dicts = self.run_cmd2("revert", file_list)
+
         return info_dicts
 
     def revert_folders(self, folder_list):
@@ -339,13 +345,14 @@ class P4Client(object):
         info_dicts = self.run_cmd2("revert", [] + cleaned_folder_list)
         return info_dicts
 
-    def revert_changelist(self, changelist="default"):
+    def revert_changelist(self, unchanged_only=False, changelist="default"):
         """
         Reverts all files in a given changelist
         :param changelist: string or int value
+        :param unchanged_only: *bool*
         """
         files = self.get_files_in_changelist(changelist)
-        self.revert_files(files)
+        self.revert_files(files, unchanged_only=unchanged_only)
 
     def sync_folders(self, folder_list):
         """
