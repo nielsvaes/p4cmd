@@ -573,13 +573,14 @@ class P4Client(object):
 
         return depot_paths
 
-    def get_pending_changelists(self, description_filter="", perfect_match_only=False, case_sensitive=False):
+    def get_pending_changelists(self, description_filter="", perfect_match_only=False, case_sensitive=False, descriptions=False):
         """
         Returns all the pending changelists, filtered on the changelist description
 
         :param description_filter: *string* to filter changelist descriptions
         :param perfect_match_only: *bool* if True, will only return CLs with the exact matching filter
         :param case_sensitive: *bool*
+        :param descriptions: *bool* if set to True, will return the changelist description instead of the changelist number
         :return: *list* with changelist numbers as ints
         """
         info_dicts = self.run_cmd2("changes", ["-l", "-s", "pending", "-u", self.user, "-c", self.client])
@@ -595,17 +596,20 @@ class P4Client(object):
 
             # no filter means just add all the changelists
             if description_filter == "":
-                changelists.append(self.__get_dict_value(info_dict, "change"))
+                changelists.append([self.__get_dict_value(info_dict, "change"), cl_description])
             # else, apply filters
             else:
                 if perfect_match_only:
                     if description_filter == cl_description:
-                        changelists.append(self.__get_dict_value(info_dict, "change"))
+                        changelists.append([self.__get_dict_value(info_dict, "change"), cl_description])
                 else:
                     if description_filter in cl_description:
-                        changelists.append(self.__get_dict_value(info_dict, "change"))
+                        changelists.append([self.__get_dict_value(info_dict, "change"), cl_description])
 
-        return [int(cl) for cl in changelists]
+        if descriptions:
+            return [pair[1] for pair in changelists]
+        else:
+            return [int(pair[0]) for pair in changelists]
 
     def get_or_make_changelist(self, changelist_description, case_sensitive=False):
         """
