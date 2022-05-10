@@ -307,6 +307,22 @@ class P4Client(object):
             return True
         return False
 
+    def copy_file(self, original_file_path, copied_file_path, changelist="default"):
+        """
+        P4 copy-renames a file
+
+        :param original_file_path: *string*
+        :param copied_file_path: *string*
+        :param changelist:  *string* or *int* changelist number or description. Will be made if it doesn't exist.
+        :return: *bool*
+        """
+        changelist = self.__ensure_changelist(changelist)
+
+        info_dict = self.run_cmd2("copy", ["-c", str(changelist), original_file_path, copied_file_path])[0]
+        if self.__get_dict_value(info_dict, "code") != "error":
+            return True
+        return False
+
     def revert_files(self, file_list, unchanged_only=False):
         """
         Reverts files in file_list
