@@ -842,6 +842,7 @@ class P4Client(object):
             for item in os.listdir(current_dir):
                 if item == ".p4config":
                     logging.info(".p4config found in %s" % current_dir)
+                    self.perforce_root = current_dir
                     return True
             last_dir = current_dir
             current_dir = os.path.abspath(current_dir + os.path.sep + os.pardir)
