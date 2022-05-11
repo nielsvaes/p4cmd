@@ -15,6 +15,8 @@ from p4cmd import p4cmd
 client = p4cmd.P4Client("~/nisse/projects/raw")
 
 ```
+If you pass in a path into `P4Client` that doesn't have a `.p4config` file in it, the class will travel up the chain of parent folders to find a `.p4config` file. When found, `perforce_root` will be set to this folder.
+
 
 ```python
 from p4cmd import p4cmd
