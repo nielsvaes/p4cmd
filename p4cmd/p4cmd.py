@@ -30,7 +30,8 @@ class P4Client(object):
         self.server = server
 
         if not self.__p4config_exists():
-            logging.warning("No .p4config file found in %s!" % self.perforce_root)
+            if not silent:
+                logging.warning("No .p4config file found in %s!" % self.perforce_root)
 
         if user is None:
             self.user = self.get_p4_setting("P4USER")
