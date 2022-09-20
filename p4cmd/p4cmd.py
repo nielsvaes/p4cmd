@@ -484,7 +484,7 @@ class P4Client(object):
             else:
                 all_files.extend([os.path.join(folder, file) for file in os.listdir(folder) if os.path.isfile(os.path.join(folder, file))])
 
-        self.add_or_edit_files(all_files, changelist=changelist)
+        return self.add_or_edit_files(all_files, changelist=changelist)
 
     def add_or_edit_files(self, file_list, changelist="default"):
         """
