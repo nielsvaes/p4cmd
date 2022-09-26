@@ -3,9 +3,11 @@ import setuptools
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
+data_files_to_include = ["*.png"]
+
 setuptools.setup(
     name="p4cmd",
-    version="1.3.4",
+    version="1.3.5",
     author="Niels Vaes",
     license='MIT',
     author_email="nielsvaes@gmail.com",
@@ -15,6 +17,9 @@ setuptools.setup(
     url="https://github.com/nielsvaes/p4cmd",
     install_requires=[],
     packages=setuptools.find_packages(),
+    package_data={
+        "": data_files_to_include,
+    },
     classifiers=[
         "Operating System :: OS Independent",
     ]
