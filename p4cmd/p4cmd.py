@@ -813,11 +813,19 @@ class P4Client(object):
             p4file.set_local_file_path(self.__get_dict_value(file_dict, "clientFile"))
             p4file.set_have_revision(self.__get_dict_value(file_dict, "haveRev"))
             p4file.set_head_revision(self.__get_dict_value(file_dict, "headRev"))
-            p4file.set_checked_out_by(self.__get_dict_value(file_dict, "otherOpen0"))
             p4file.set_last_submit_time(self.__get_dict_value(file_dict, "headTime"))
             p4file.set_action(self.__get_dict_value(file_dict, "action"))
             p4file.set_head_action(self.__get_dict_value(file_dict, "headAction"))
             p4file.set_raw_data(str(file_dict))
+
+            opened_by = []
+            for key, value in file_dict.items():
+                other_open = "otherOpen" if sys.version_info.major == 2 else "otherOpen".encode()
+                if other_open in key and key != other_open:
+                    value = self.__get_dict_value(file_dict, key)
+                    opened_by.append(value)
+
+            p4file.set_checked_out_by(opened_by)
 
             if allow_invalid_files:
                 p4files.append(p4file)
