@@ -106,6 +106,8 @@ class P4File(object):
     def needs_syncing(self):
         if not self.is_deleted() and not self.is_moved_deleted():
             if not self.is_open_for_add() and not self.is_open_for_edit():
+                if self.__head_revision is None:
+                    return False
                 if self.__have_revision is None and self.__head_revision is not None:
                     return True
                 if self.__have_revision < self.__head_revision:
