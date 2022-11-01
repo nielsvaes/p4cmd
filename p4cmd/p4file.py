@@ -37,7 +37,7 @@ class P4File(object):
         self.__dict__.update(copy_of_self.__dict__)
 
     def update_last_submitted_by(self, p4client):
-        info_dict = p4client.run_cmd2("changes", [self.__depot_file_path])[0]
+        info_dict = p4client.run_cmd("changes", [self.__depot_file_path])[0]
         self.set_last_submitted_by(info_dict.get("user", "UNKNOWN"))
 
     def is_valid(self):

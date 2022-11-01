@@ -19,8 +19,8 @@ class P4Client(object):
         Make a new P4Client
 
         :param perforce_root: *string* root of your Perforce workspace. This would also be where your .p4config file is
-        :param user: *string* P4USER, if None will tried to be found automatically
-        :param client: *string* P4CLIENT, if None will tried to be found automatically
+        :param user: *string* P4USER, if None will be tried to be found automatically
+        :param client: *string* P4CLIENT, if None will be tried to be found automatically
         :param silent: *bool* if True, suppresses error messages to cut down on terminal spam
         """
         self.perforce_root = perforce_root
@@ -67,12 +67,13 @@ class P4Client(object):
         """
         self.perforce_root = root
 
-    def run_cmd2(self, cmd, args=[], use_global_options=True, online_check=True):
+    def run_cmd(self, cmd, args=[], file_list=[], use_global_options=True, online_check=True):
         """
         Reads the output stream of the command and returns it as a marshaled dict.
 
         :param cmd: *string* p4 command like "change", "reopen", "move"
-        :param args: *list* of string arguments like ["-c", "27277", "//depot/folder/file.atom"]
+        :param args: *list* of string arguments like ["-c", "27277"]
+        :param file_list: *list* of string arguments like ["//depot/folder/file.atom", "D:/Games/Whatever.fbx]
         :param use_global_options: *bool*
         :param online_check: *bool* if set to True, will first check if the remote server is reachable before executing the command.
         :return: *list* of dictionaries with either the marshaled returns of the command or dictionaries with the
@@ -81,45 +82,46 @@ class P4Client(object):
         if online_check:
             if not self.host_online():
                 logging.warning("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
-                #raise p4errors.ServerOffline("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
 
         if self.perforce_root is not None:
             os.chdir(self.perforce_root)
 
-        # build arg strings within the max size
+        file_list = [f'"{f}"' for f in file_list]
+
+        # build arg and file strings within the max size
         clamped_arg_list = split_list_into_strings_of_length(args, max_length=MAX_ARG_LEN)
+        clamped_file_list = split_list_into_strings_of_length(file_list, max_length=MAX_ARG_LEN)
 
         dict_list = []
         for clamped_arg in clamped_arg_list:
-            if use_global_options:
-                global_options = ["-u", self.user, "-c", self.client]
-                command = "p4 -G %s %s %s" % (" ".join(global_options), cmd, clamped_arg)
-            else:
-                command = "p4 %s %s" % (cmd, clamped_arg)
+            for clamped_files in clamped_file_list:
+                if use_global_options:
+                    # command = f"p4 -G {' '.join(global_options)} {cmd} {clamped_arg}"
+                    command = f"p4 -G -u {self.user} -c {self.client} {cmd} {clamped_arg} {clamped_files}"
+                else:
+                    command = f"p4 {cmd} {clamped_arg} {clamped_files}"
 
-            if len(command) > MAX_CMD_LEN:
-                # This shouldn't happen, but just in case the command prefix end up really long
-                logging.warning("Command length: {} exceeds MAX_CMD_LEN {} on command: {}".format(len(command),
-                                                                                                  MAX_CMD_LEN,
-                                                                                                  command))
+                if len(command) > MAX_CMD_LEN:
+                    # This shouldn't happen, but just in case the command prefix end up really long
+                    logging.warning(f"Command length: {format(len(command))} exceeds MAX_CMD_LEN {MAX_CMD_LEN} on command: {MAX_CMD_LEN}")
 
-            pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, shell=True)
-            output = pipe.stdout
+                pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, shell=True)
+                output = pipe.stdout
 
-            try:
-                while True:
-                    value_dict = marshal.load(output)
-                    dict_list.append(value_dict)
-            except EOFError:
-                pass
-            except ValueError as error:
-                output_dict = {
-                    "command": command,
-                    "code": "error",
-                    "error": str(error),
-                    "raw_output": subprocess.check_output(command, stderr=subprocess.STDOUT, shell=True)
-                }
-                dict_list.append(output_dict)
+                try:
+                    while True:
+                        value_dict = marshal.load(output)
+                        dict_list.append(value_dict)
+                except EOFError:
+                    pass
+                except ValueError as error:
+                    output_dict = {
+                        "command": command,
+                        "code": "error",
+                        "error": str(error),
+                        "raw_output": subprocess.check_output(command, stderr=subprocess.STDOUT, shell=True)
+                    }
+                    dict_list.append(output_dict)
 
         return dict_list
 
@@ -133,7 +135,7 @@ class P4Client(object):
         """
         try:
             # skipping the online check for setting commands
-            info_dict = self.run_cmd2("set", [setting], use_global_options=False, online_check=False)[0]
+            info_dict = self.run_cmd("set", [setting], use_global_options=False, online_check=False)[0]
         except:
             raise p4errors.WorkSpaceError("Unable to find setting %s" % setting)
 
@@ -191,7 +193,7 @@ class P4Client(object):
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
 
         if self.host_online():
-            fstat_output = self.run_cmd2("fstat", file_list)
+            fstat_output = self.run_cmd("fstat", file_list=file_list)
             p4files = self.__fstat_to_p4_files(fstat_output, allow_invalid_files=allow_invalid_files)
             return p4files
         else:
@@ -222,7 +224,7 @@ class P4Client(object):
             else:
                 folder = folder + "*" if folder.endswith("/") or folder.endswith("\\") else folder + "/*"
 
-            fstat_output = self.run_cmd2("fstat", [folder])
+            fstat_output = self.run_cmd("fstat", file_list=[folder])
             p4files = self.__fstat_to_p4_files(fstat_output, allow_invalid_files=allow_invalid_files)
             return p4files
 
@@ -284,7 +286,7 @@ class P4Client(object):
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
         changelist = self.__ensure_changelist(changelist)
-        info_dicts = self.run_cmd2("reopen", ["-c", changelist] + file_list)
+        info_dicts = self.run_cmd("reopen", args=["-c", changelist], file_list=file_list)
 
         for info_dict in info_dicts:
             if self.__get_dict_value(info_dict, "code") == "error" and not self.silent:
@@ -303,7 +305,7 @@ class P4Client(object):
         """
         changelist = self.__ensure_changelist(changelist)
 
-        info_dict = self.run_cmd2("move", ["-c", str(changelist), old_file_path, new_file_path])[0]
+        info_dict = self.run_cmd("move", args=["-c", str(changelist), old_file_path, new_file_path])[0]
         if self.__get_dict_value(info_dict, "code") != "error":
             return True
         return False
@@ -319,7 +321,7 @@ class P4Client(object):
         """
         changelist = self.__ensure_changelist(changelist)
 
-        info_dict = self.run_cmd2("copy", ["-c", str(changelist), original_file_path, copied_file_path])[0]
+        info_dict = self.run_cmd("copy", args=["-c", str(changelist), original_file_path, copied_file_path])[0]
         if self.__get_dict_value(info_dict, "code") != "error":
             return True
         return False
@@ -336,9 +338,9 @@ class P4Client(object):
         if not self.silent:
             self.__validate_file_list(file_list)
         if unchanged_only:
-            info_dicts = self.run_cmd2("revert", ["-a"], file_list)
+            info_dicts = self.run_cmd("revert", ["-a"], file_list=file_list)
         else:
-            info_dicts = self.run_cmd2("revert", file_list)
+            info_dicts = self.run_cmd("revert", file_list=file_list)
 
         return info_dicts
 
@@ -350,7 +352,8 @@ class P4Client(object):
         :return: *list* of info dicts
         """
         folder_list = convert_to_list(folder_list) if not isinstance(folder_list, list) else folder_list
-        if not self.silent: self.__validate_file_list(folder_list)
+        if not self.silent:
+            self.__validate_file_list(folder_list)
 
         cleaned_folder_list = []
         for folder in folder_list:
@@ -359,7 +362,7 @@ class P4Client(object):
             folder += "/..."
             cleaned_folder_list.append(folder)
 
-        info_dicts = self.run_cmd2("revert", [] + cleaned_folder_list)
+        info_dicts = self.run_cmd("revert", args=[], file_list=cleaned_folder_list)
         return info_dicts
 
     def revert_changelist(self, unchanged_only=False, changelist="default"):
@@ -379,7 +382,8 @@ class P4Client(object):
         :return: *list* of info dicts
         """
         folder_list = convert_to_list(folder_list) if not isinstance(folder_list, list) else folder_list
-        if not self.silent: self.__validate_file_list(folder_list)
+        if not self.silent:
+            self.__validate_file_list(folder_list)
 
         cleaned_folder_list = []
         for folder in folder_list:
@@ -388,7 +392,7 @@ class P4Client(object):
             folder += "/..."
             cleaned_folder_list.append(folder)
 
-        info_dicts = self.run_cmd2("sync", [] + cleaned_folder_list)
+        info_dicts = self.run_cmd("sync", args=[], file_list=cleaned_folder_list)
         return info_dicts
 
     def sync_files(self, file_list, revision=-1, verify=True, force=False):
@@ -408,9 +412,10 @@ class P4Client(object):
             file_list = [f"{path}#{revision}" for path in file_list]
 
         initial_arg_list = ["-f"] if force else []
-        if not self.silent: self.__validate_file_list(file_list)
+        if not self.silent:
+            self.__validate_file_list(file_list)
 
-        info_dicts = self.run_cmd2("sync", initial_arg_list + file_list)
+        info_dicts = self.run_cmd("sync", args=initial_arg_list, file_list=file_list)
 
         if verify:
             local_file_paths = self.get_local_paths(file_list)
@@ -429,20 +434,23 @@ class P4Client(object):
         :return: *list* of info dictionaries
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
-        if not self.silent: self.__validate_file_list(file_list)
-        info_dicts = self.run_cmd2("delete", ["-c", changelist] + file_list)
+        if not self.silent:
+            self.__validate_file_list(file_list)
+        info_dicts = self.run_cmd("delete", args=["-c", changelist], file_list=file_list)
         return info_dicts
 
     def delete_changelist(self, changelist="default", perfect_match_only=False, case_sensitive=False):
         """
-        Deletes a changelist via cl num or description
-        :param changelist:
-        :return:
+        Deletes a changelist via changelist number or description
+        :param changelist: *string* or *int* change list number
+        :param perfect_match_only: bool* only delete if there's a perfect match of the changelist description
+        :param case_sensitive: *bool*
         """
         cl_num = self.get_pending_changelists(changelist, perfect_match_only, case_sensitive)
         for cl in cl_num:
-            info_dicts = self.run_cmd2('change', ['-d', cl])
+            info_dicts = self.run_cmd('change', args=['-d', cl])
             # TODO: Break down info dicts and look for errors
+        return info_dicts
 
     def get_shelved_files(self):
         """
@@ -453,7 +461,7 @@ class P4Client(object):
         """
         files_and_cl = []
         changelists = self.get_pending_changelists()
-        info_dicts = self.run_cmd2("describe", ["-S", " ".join("%s" % cl for cl in changelists)])
+        info_dicts = self.run_cmd("describe", args=["-S", " ".join("%s" % cl for cl in changelists)])
         for info_dict in info_dicts:
             for key in info_dict.keys():
                 if b"depotFile" in key:
@@ -495,7 +503,8 @@ class P4Client(object):
         :return: *list* of info dictionaries
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
-        if not self.silent: self.__validate_file_list(file_list)
+        if not self.silent:
+            self.__validate_file_list(file_list)
 
         files_for_add = []
         files_for_checkout = []
@@ -527,7 +536,7 @@ class P4Client(object):
         :param depot_path: *string* depot_path of the file
         :return: *int* number of changelist
         """
-        info_dicts = self.run_cmd2("opened", ["-a", "-u", self.user])
+        info_dicts = self.run_cmd("opened", args=["-a", "-u", self.user])
         for info_dict in info_dicts:
             if depot_path == self.__get_dict_value(info_dict, "depotFile"):
                 return int(self.__get_dict_value(info_dict, "change"))
@@ -542,11 +551,12 @@ class P4Client(object):
         :return: *list* of info dictionaries
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
-        if not self.silent: self.__validate_file_list(file_list)
+        if not self.silent:
+            self.__validate_file_list(file_list)
 
         changelist = self.__ensure_changelist(changelist)
 
-        info_dicts = self.run_cmd2("edit", ["-c", changelist] + file_list)
+        info_dicts = self.run_cmd("edit", args=["-c", changelist], file_list=file_list)
         for info_dict in info_dicts:
             if self.__get_dict_value(info_dict, "code") == "error" and not self.silent:
                 print(self.__get_dict_value(info_dict, "data"))
@@ -560,11 +570,12 @@ class P4Client(object):
         :return: *list* of info dictionaries
         """
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
-        if not self.silent: self.__validate_file_list(file_list)
+        if not self.silent:
+            self.__validate_file_list(file_list)
 
         changelist = self.__ensure_changelist(changelist)
 
-        info_dicts = self.run_cmd2("add", ["-c", changelist] + file_list)
+        info_dicts = self.run_cmd("add", args=["-c", changelist], file_list=file_list)
         return info_dicts
 
     def get_files_in_changelist(self, changelist="default"):
@@ -582,7 +593,7 @@ class P4Client(object):
             except IndexError as err:
                 return depot_paths
 
-        info_dicts = self.run_cmd2("describe", ["-O", changelist])
+        info_dicts = self.run_cmd("describe", args=["-O", changelist])
         for info_dict in info_dicts:
             for key, value in info_dict.items():
                 if "depotFile" in key.decode():
@@ -592,7 +603,7 @@ class P4Client(object):
 
     def get_pending_changelists(self, description_filter="", perfect_match_only=False, case_sensitive=False, descriptions=False):
         """
-        Returns all the pending changelists, filtered on the changelist description
+        Returns all the pending change lists, filtered on the changelist description
 
         :param description_filter: *string* to filter changelist descriptions
         :param perfect_match_only: *bool* if True, will only return CLs with the exact matching filter
@@ -600,7 +611,7 @@ class P4Client(object):
         :param descriptions: *bool* if set to True, will return the changelist description instead of the changelist number
         :return: *list* with changelist numbers as ints
         """
-        info_dicts = self.run_cmd2("changes", ["-l", "-s", "pending", "-u", self.user, "-c", self.client])
+        info_dicts = self.run_cmd("changes", args=["-l", "-s", "pending", "-u", self.user, "-c", self.client])
         changelists = []
 
         for info_dict in info_dicts:
@@ -657,7 +668,7 @@ class P4Client(object):
         """
         Returns a list of all workspaces that belong to this user
         """
-        info_dicts = self.run_cmd2("clients", ["-u", self.user])
+        info_dicts = self.run_cmd("clients", args=["-u", self.user])
         workspaces = []
 
         for info_dict in info_dicts:
@@ -681,7 +692,7 @@ class P4Client(object):
                 path += "/..."
             updated_paths.append(path)
 
-        info_dicts = self.run_cmd2("where", updated_paths)
+        info_dicts = self.run_cmd("where", updated_paths)
         depot_paths = [self.__get_dict_value(info, "depotFile").rstrip("/...") for info in info_dicts]
         return depot_paths
 
@@ -701,7 +712,7 @@ class P4Client(object):
                 path_ext = path_ext.split("#")[0]
             no_rev_paths.append("{}{}".format(path_without_ext, path_ext))
 
-        info_dicts = self.run_cmd2("where", no_rev_paths)
+        info_dicts = self.run_cmd("where", file_list=no_rev_paths)
         local_paths = [self.__get_dict_value(info, "path") for info in info_dicts]
         return local_paths
 
@@ -714,7 +725,7 @@ class P4Client(object):
         """
         info_dicts = []
         for path in paths:
-            info_dicts.extend(self.run_cmd2("changes", ["-l", path]))
+            info_dicts.extend(self.run_cmd("changes", args=["-l", path]))
 
         # decode from bytes
         if sys.version_info.major > 2:
