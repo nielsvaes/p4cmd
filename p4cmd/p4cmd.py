@@ -72,7 +72,8 @@ class P4Client(object):
         Reads the output stream of the command and returns it as a marshaled dict.
 
         :param cmd: *string* p4 command like "change", "reopen", "move"
-        :param args: *list* of string arguments like ["-c", "27277", "//depot/folder/file.atom"]
+        :param args: *list* of string arguments like ["-c", "27277"]
+        :param file_list: *list* of string arguments like ["//depot/folder/file.atom", "D:/Games/Whatever.fbx]
         :param use_global_options: *bool*
         :param online_check: *bool* if set to True, will first check if the remote server is reachable before executing the command.
         :return: *list* of dictionaries with either the marshaled returns of the command or dictionaries with the
@@ -81,12 +82,13 @@ class P4Client(object):
         if online_check:
             if not self.host_online():
                 logging.warning("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
-                #raise p4errors.ServerOffline("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
 
         if self.perforce_root is not None:
             os.chdir(self.perforce_root)
 
-        # build arg strings within the max size
+        file_list = [f'"{f}"' for f in file_list]
+
+        # build arg and file strings within the max size
         clamped_arg_list = split_list_into_strings_of_length(args, max_length=MAX_ARG_LEN)
         clamped_file_list = split_list_into_strings_of_length(file_list, max_length=MAX_ARG_LEN)
 
@@ -101,11 +103,7 @@ class P4Client(object):
 
                 if len(command) > MAX_CMD_LEN:
                     # This shouldn't happen, but just in case the command prefix end up really long
-                    logging.warning("Command length: {} exceeds MAX_CMD_LEN {} on command: {}".format(len(command),
-                                                                                                      MAX_CMD_LEN,
-                                                                                                      command))
-
-                print(command)
+                    logging.warning(f"Command length: {format(len(command))} exceeds MAX_CMD_LEN {MAX_CMD_LEN} on command: {MAX_CMD_LEN}")
 
                 pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, shell=True)
                 output = pipe.stdout
