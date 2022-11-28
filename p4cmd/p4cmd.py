@@ -105,6 +105,7 @@ class P4Client(object):
                     # This shouldn't happen, but just in case the command prefix end up really long
                     logging.warning(f"Command length: {format(len(command))} exceeds MAX_CMD_LEN {MAX_CMD_LEN} on command: {MAX_CMD_LEN}")
 
+                # print(command)
                 pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, shell=True)
                 output = pipe.stdout
 
@@ -305,7 +306,7 @@ class P4Client(object):
         """
         changelist = self.__ensure_changelist(changelist)
 
-        info_dict = self.run_cmd("move", args=["-c", str(changelist), old_file_path, new_file_path])[0]
+        info_dict = self.run_cmd("move", args=["-c", str(changelist)], file_list=[old_file_path, new_file_path])[0]
         if self.__get_dict_value(info_dict, "code") != "error":
             return True
         return False
@@ -321,7 +322,7 @@ class P4Client(object):
         """
         changelist = self.__ensure_changelist(changelist)
 
-        info_dict = self.run_cmd("copy", args=["-c", str(changelist), original_file_path, copied_file_path])[0]
+        info_dict = self.run_cmd("copy", args=["-c", str(changelist)], file_list=[original_file_path, copied_file_path])[0]
         if self.__get_dict_value(info_dict, "code") != "error":
             return True
         return False
