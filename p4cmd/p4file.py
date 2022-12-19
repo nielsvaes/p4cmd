@@ -10,6 +10,8 @@ class Status:
     MOVED = "MOVED"
     UP_TO_DATE  = "UP_TO_DATE"
     UNKNOWN = "UNKNOWN"
+    DELETED = "DELETED"
+    MOVED_DELETED = "MOVED_DELETED"
 
 
 class P4File(object):
@@ -117,6 +119,10 @@ class P4File(object):
     def get_status(self):
         if self.is_marked_for_delete():
             return Status.OPEN_FOR_DELETE
+        if self.is_deleted():
+            return Status.DELETED
+        if self.is_moved_deleted():
+            return Status.MOVED_DELETED
         if self.needs_syncing():
             return Status.NEED_SYNC
         if self.is_depot_only():
