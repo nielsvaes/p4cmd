@@ -24,6 +24,7 @@ class P4Client(object):
         :param silent: *bool* if True, suppresses error messages to cut down on terminal spam
         """
         self.perforce_root = perforce_root
+        self.silent = silent
 
         self.user = user
         self.client = client
@@ -46,7 +47,9 @@ class P4Client(object):
             if self.server is None:
                 raise p4errors.WorkSpaceError("Could not find P4PORT")
 
-        self.silent = silent
+
+        # print(self.user)
+        # print(self.client)
 
     @classmethod
     def from_env(cls, *args, **kwargs):
@@ -125,6 +128,21 @@ class P4Client(object):
                     dict_list.append(output_dict)
 
         return dict_list
+
+    def get_ticket_expiration(self):
+        """
+        Get the time in seconds when the current authentication ticket will expire
+
+        :return: *int* seconds until authentication ticket expires or *None*
+        """
+        if not self.host_online():
+            return None
+        result = self.run_cmd("login", args=["-s"])
+        info_dict = result[0]
+        expiration_seconds = self.__get_dict_value(info_dict, "TicketExpiration", None)
+        if expiration_seconds is not None:
+            return int(expiration_seconds)
+        return None
 
     def get_p4_setting(self, setting):
         """
