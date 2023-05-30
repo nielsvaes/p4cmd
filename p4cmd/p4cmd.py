@@ -854,6 +854,11 @@ class P4Client(object):
                 if other_open in key and key != other_open:
                     value = self.__get_dict_value(file_dict, key)
                     opened_by.append(value)
+                action_owner = "actionOwner" if sys.version_info == 2 else "actionOwner".encode()
+                if action_owner in key:
+                    value = self.__get_dict_value(file_dict, key)
+                    value = value.decode() + "@" + self.find_p4_client()
+                    opened_by.append(value.encode())
 
             p4file.set_checked_out_by(opened_by)
 
