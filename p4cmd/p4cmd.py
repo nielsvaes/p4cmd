@@ -455,6 +455,9 @@ class P4Client(object):
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
         if not self.silent:
             self.__validate_file_list(file_list)
+
+        changelist = self.__ensure_changelist(changelist)
+
         info_dicts = self.run_cmd("delete", args=["-c", changelist], file_list=file_list)
         return info_dicts
 
