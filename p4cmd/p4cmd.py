@@ -363,11 +363,12 @@ class P4Client(object):
 
         return info_dicts
 
-    def revert_folders(self, folder_list):
+    def revert_folders(self, folder_list, unchanged_only=False):
         """
         Recursively reverts complete folders
 
         :param folder_list: *list* folder paths
+        :param unchanged_only: *bool*
         :return: *list* of info dicts
         """
         folder_list = convert_to_list(folder_list) if not isinstance(folder_list, list) else folder_list
@@ -381,7 +382,10 @@ class P4Client(object):
             folder += "/..."
             cleaned_folder_list.append(folder)
 
-        info_dicts = self.run_cmd("revert", args=[], file_list=cleaned_folder_list)
+        if unchanged_only:
+            info_dicts = self.run_cmd("revert", ["-a"], file_list=cleaned_folder_list)
+        else:
+            info_dicts = self.run_cmd("revert", args=[], file_list=cleaned_folder_list)
         return info_dicts
 
     def revert_changelist(self, unchanged_only=False, changelist="default"):
@@ -391,7 +395,7 @@ class P4Client(object):
         :param unchanged_only: *bool*
         """
         files = self.get_files_in_changelist(changelist)
-        self.revert_files(files, unchanged_only=unchanged_only)
+        return self.revert_files(files, unchanged_only=unchanged_only)
 
     def sync_folders(self, folder_list):
         """
@@ -412,6 +416,45 @@ class P4Client(object):
             cleaned_folder_list.append(folder)
 
         info_dicts = self.run_cmd("sync", args=[], file_list=cleaned_folder_list)
+        return info_dicts
+
+    def reconcile_offline_files(self, file_list, changelist="default"):
+        """
+        Adds, opens for edit or delete any files that were changed outside Perforce
+
+        :param file_list: *list* of local files
+        :param changelist: string or int value
+        :return: *list* of info dicts
+        """
+        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+
+        changelist = self.__ensure_changelist(changelist)
+
+        info_dicts = self.run_cmd("reconcile", args=["-a", "-e", "-d", "-c", changelist], file_list=file_list)
+        return info_dicts
+
+    def reconcile_offline_folders(self, folder_list, changelist="default"):
+        """
+        Adds, opens for edit or delete any files in the rootfolder + subfolders that were changed outside Perforce
+
+        :param folder_list: *list* folders
+        :param changelist: string or int value
+        :return: *list* of info dicts
+        """
+        folder_list = convert_to_list(folder_list) if not isinstance(folder_list, list) else folder_list
+        if not self.silent:
+            self.__validate_file_list(folder_list)
+
+        cleaned_folder_list = []
+        for folder in folder_list:
+            folder = folder.replace("\\", "/")
+            folder = folder.rstrip("/")
+            folder += "/..."
+            cleaned_folder_list.append(folder)
+
+        changelist = self.__ensure_changelist(changelist)
+
+        info_dicts = self.run_cmd("reconcile", args=["-a", "-e", "-d", "-c", changelist], file_list=cleaned_folder_list)
         return info_dicts
 
     def sync_files(self, file_list, revision=-1, verify=True, force=False):
