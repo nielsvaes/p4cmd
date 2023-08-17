@@ -14,7 +14,7 @@ MAX_ARG_LEN = 8000  # max length of args string when combined, close to max, but
 
 
 class P4Client(object):
-    def __init__(self, perforce_root, user=None, client=None, server=None, silent=True):
+    def __init__(self, perforce_root, user=None, client=None, server=None, silent=True, max_parallel_connections=4):
         """
         Make a new P4Client
 
@@ -22,10 +22,13 @@ class P4Client(object):
         :param user: *string* P4USER, if None will be tried to be found automatically
         :param client: *string* P4CLIENT, if None will be tried to be found automatically
         :param silent: *bool* if True, suppresses error messages to cut down on terminal spam
+        :param max_parallel_connections: *int* max number of connections to use while syncing/submitting. This requires
+        the server to have net.parallel.max and net parallel.threads to be > 1
         """
         self.perforce_root = perforce_root
         self.silent = silent
 
+        self.max_parallel_connections = max_parallel_connections
         self.user = user
         self.client = client
         self.server = server
@@ -48,9 +51,6 @@ class P4Client(object):
                 raise p4errors.WorkSpaceError("Could not find P4PORT")
 
 
-        # print(self.user)
-        # print(self.client)
-
     @classmethod
     def from_env(cls, *args, **kwargs):
         """
@@ -69,6 +69,15 @@ class P4Client(object):
         Set the root of the perforce commands. This is important so it can use the proper .p4config file for the cmds
         """
         self.perforce_root = root
+
+    def set_max_parallel_connections(self, value):
+        """
+        Set the number of maximum parallel connections to use for sync/submit. Default class value is 4
+
+        :param value: *int*
+        :return:
+        """
+        self.max_parallel_connections = value
 
     def run_cmd(self, cmd, args=[], file_list=[], use_global_options=True, online_check=True):
         """
@@ -99,7 +108,6 @@ class P4Client(object):
         for clamped_arg in clamped_arg_list:
             for clamped_files in clamped_file_list:
                 if use_global_options:
-                    # command = f"p4 -G {' '.join(global_options)} {cmd} {clamped_arg}"
                     command = f"p4 -G -u {self.user} -c {self.client} {cmd} {clamped_arg} {clamped_files}"
                 else:
                     command = f"p4 {cmd} {clamped_arg} {clamped_files}"
@@ -108,7 +116,6 @@ class P4Client(object):
                     # This shouldn't happen, but just in case the command prefix end up really long
                     logging.warning(f"Command length: {format(len(command))} exceeds MAX_CMD_LEN {MAX_CMD_LEN} on command: {MAX_CMD_LEN}")
 
-                # print(command)
                 pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, shell=True)
                 output = pipe.stdout
 
@@ -397,6 +404,22 @@ class P4Client(object):
         files = self.get_files_in_changelist(changelist)
         return self.revert_files(files, unchanged_only=unchanged_only)
 
+    def submit_changelist(self, changelist, revert_unchanged_files=True):
+        """
+        Submits a changelist
+
+        :param changelist: string or int value.
+        :param revert_unchanged_files: *bool* does what it says on the box
+        :return:
+        """
+        changelist = self.__ensure_changelist(changelist)
+
+        if revert_unchanged_files:
+            self.revert_changelist(unchanged_only=True, changelist=changelist)
+
+        info_dicts = self.run_cmd("submit", args=["-c", changelist, "--parallel", f"threads={self.max_parallel_connections}"])
+        return info_dicts
+
     def sync_folders(self, folder_list):
         """
         Recursively syncs complete folders
@@ -415,7 +438,37 @@ class P4Client(object):
             folder += "/..."
             cleaned_folder_list.append(folder)
 
-        info_dicts = self.run_cmd("sync", args=[], file_list=cleaned_folder_list)
+        info_dicts = self.run_cmd("sync", args=["--parallel", f"threads={self.max_parallel_connections}"], file_list=cleaned_folder_list)
+        return info_dicts
+
+    def sync_files(self, file_list, revision=-1, verify=True, force=False):
+        """
+        Syncs files
+
+        :param file_list: *list*
+        :param verify: *bool* if true, checks that file synced files exist on disk. Throws a warning if they don't
+        This could happen when a synced file is deleted locally
+        :param revision: *int* if -1, get latest, else get revision number
+        :param force: *bool* force sync
+        :return: *list* of info dicts
+        """
+        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        if revision != -1:
+            verify = False
+            file_list = [f"{path}#{revision}" for path in file_list]
+
+        initial_arg_list = ["-f", "--parallel", f"threads={self.max_parallel_connections}"] if force else ["--parallel", f"threads={self.max_parallel_connections}"]
+        if not self.silent:
+            self.__validate_file_list(file_list)
+
+        info_dicts = self.run_cmd("sync", args=initial_arg_list, file_list=file_list)
+
+        if verify:
+            local_file_paths = self.get_local_paths(file_list)
+            for local_file_path in local_file_paths:
+                if not os.path.isfile(local_file_path):
+                    logging.warning(f"File didn't exist after syncing, try force syncing it instead: {local_file_path}")
+
         return info_dicts
 
     def reconcile_offline_files(self, file_list, changelist="default"):
@@ -455,36 +508,6 @@ class P4Client(object):
         changelist = self.__ensure_changelist(changelist)
 
         info_dicts = self.run_cmd("reconcile", args=["-a", "-e", "-d", "-c", changelist], file_list=cleaned_folder_list)
-        return info_dicts
-
-    def sync_files(self, file_list, revision=-1, verify=True, force=False):
-        """
-        Syncs files
-
-        :param file_list: *list*
-        :param verify: *bool* if true, checks that file synced files exist on disk. Throws a warning if they don't
-        This could happen when a synced file is deleted locally
-        :param revision: *int* if -1, get latest, else get revision number
-        :param force: *bool* force sync
-        :return: *list* of info dicts
-        """
-        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
-        if revision != -1:
-            verify = False
-            file_list = [f"{path}#{revision}" for path in file_list]
-
-        initial_arg_list = ["-f"] if force else []
-        if not self.silent:
-            self.__validate_file_list(file_list)
-
-        info_dicts = self.run_cmd("sync", args=initial_arg_list, file_list=file_list)
-
-        if verify:
-            local_file_paths = self.get_local_paths(file_list)
-            for local_file_path in local_file_paths:
-                if not os.path.isfile(local_file_path):
-                    logging.warning(f"File didn't exist after syncing, try force syncing it instead: {local_file_path}")
-
         return info_dicts
 
     def delete_files(self, file_list, changelist="default"):

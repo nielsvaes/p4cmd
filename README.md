@@ -54,7 +54,7 @@ p4.add_or_edit_files(files, changelist="My new changelist")
 
 ```
 
-Seperate `edit_files` and `add_files` methods also exist if you need to use them for some reason. 
+Separate `edit_files` and `add_files` methods also exist if you need to use them for some reason. 
 
 Perforce operations can be quite slow, so if you need to check a bunch of files at once you can use do something like this:
 
@@ -170,3 +170,21 @@ files = p4.get_files_in_changelist("[houdini tools]")
 //MyGame/Animations/t_pose.fbx
 ```
 
+Submit a changelist with the description "Character files", but **don't** revert unchanged files first. 
+```python
+from p4cmd import p4cmd
+root = "~/p4/MyGame"
+
+p4 = p4cmd.P4Client(root)
+p4.submit_changelist("Character files", revert_unchanged_files=False)
+```
+
+Sync all the files in a folder, but first set the parallel connections to 2
+```python
+from p4cmd import p4cmd
+root = "~/p4/MyGame"
+
+p4 = p4cmd.P4Client(root)
+p4.set_max_parallel_connections(2)
+p4.sync_folders(["//Content/Basketball/Players/"])
+```
