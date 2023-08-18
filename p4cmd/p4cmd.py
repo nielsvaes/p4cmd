@@ -3,6 +3,7 @@ import marshal
 import sys
 import subprocess
 import socket
+import time
 
 import logging
 
@@ -220,7 +221,7 @@ class P4Client(object):
 
         if self.host_online():
             fstat_output = self.run_cmd("fstat", file_list=file_list)
-            p4files = self.__fstat_to_p4_files(fstat_output, allow_invalid_files=allow_invalid_files)
+            p4files = self.fstat_to_p4_files(fstat_output, allow_invalid_files=allow_invalid_files)
             return p4files
         else:
             p4files = []
@@ -251,7 +252,7 @@ class P4Client(object):
                 folder = folder + "*" if folder.endswith("/") or folder.endswith("\\") else folder + "/*"
 
             fstat_output = self.run_cmd("fstat", file_list=[folder])
-            p4files = self.__fstat_to_p4_files(fstat_output, allow_invalid_files=allow_invalid_files)
+            p4files = self.fstat_to_p4_files(fstat_output, allow_invalid_files=allow_invalid_files)
             return p4files
 
         else:
@@ -896,7 +897,7 @@ class P4Client(object):
             except:
                 return dictionary.get(key, default_value)
 
-    def __fstat_to_p4_files(self, fstat_output_list, allow_invalid_files=False):
+    def fstat_to_p4_files(self, fstat_output_list, allow_invalid_files=False):
         """
         Turns the output of the fstat command into a list of P4File objects
 
@@ -906,6 +907,7 @@ class P4Client(object):
         :return:
         """
         p4files = []
+        p4_client = self.find_p4_client()
         for file_dict in fstat_output_list:
             p4file = P4File()
             p4file.set_depot_file_path(self.__get_dict_value(file_dict, "depotFile"))
@@ -926,11 +928,10 @@ class P4Client(object):
                 action_owner = "actionOwner" if sys.version_info == 2 else "actionOwner".encode()
                 if action_owner in key:
                     value = self.__get_dict_value(file_dict, key)
-                    value = value.decode() + "@" + self.find_p4_client()
+                    value = value.decode() + "@" + p4_client
                     opened_by.append(value.encode())
 
             p4file.set_checked_out_by(opened_by)
-
             if allow_invalid_files:
                 p4files.append(p4file)
             else:
