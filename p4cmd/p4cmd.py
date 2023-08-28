@@ -321,6 +321,25 @@ class P4Client(object):
 
         return info_dicts
 
+    def combine_changelists(self, source_changelists, target_changelist):
+        """
+        Moves all the files from the source_changelists to the target_changelist
+
+        :param source_changelists: *list* source changelists that will be emptied
+        :param target_changelist: *string* or *int* changelist that will hold all the files
+        empty after moving the files
+        :return: *list* of info dictionaries
+        """
+        target_changelist = self.__ensure_changelist(target_changelist)
+        files_to_move = []
+        for source_cl in source_changelists:
+            source_cl = self.__ensure_changelist(source_cl)
+            files_to_move.extend(self.get_files_in_changelist(source_cl))
+
+        result = self.move_files_to_changelist(files_to_move, target_changelist)
+        return result
+
+
     def rename_file(self, old_file_path, new_file_path, changelist="default"):
         """
         P4 move-renames a file
@@ -535,9 +554,10 @@ class P4Client(object):
         :param perfect_match_only: bool* only delete if there's a perfect match of the changelist description
         :param case_sensitive: *bool*
         """
+        info_dicts = []
         cl_num = self.get_pending_changelists(changelist, perfect_match_only, case_sensitive)
         for cl in cl_num:
-            info_dicts = self.run_cmd('change', args=['-d', cl])
+            info_dicts.append(self.run_cmd('change', args=['-d', cl]))
             # TODO: Break down info dicts and look for errors
         return info_dicts
 
