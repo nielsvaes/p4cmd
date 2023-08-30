@@ -116,7 +116,7 @@ class P4Client(object):
                 if len(command) > MAX_CMD_LEN:
                     # This shouldn't happen, but just in case the command prefix end up really long
                     logging.warning(f"Command length: {format(len(command))} exceeds MAX_CMD_LEN {MAX_CMD_LEN} on command: {MAX_CMD_LEN}")
-
+                print(command)
                 pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, shell=True)
                 output = pipe.stdout
 
@@ -696,13 +696,7 @@ class P4Client(object):
         """
         depot_paths = []
 
-        if type(changelist) == str:
-            try:
-                changelist = self.get_pending_changelists(changelist, perfect_match_only=True, case_sensitive=True)[0]
-            except IndexError as err:
-                return depot_paths
-
-        info_dicts = self.run_cmd("describe", args=["-O", changelist])
+        info_dicts = self.run_cmd("opened", args=["-c", changelist])
         for info_dict in info_dicts:
             for key, value in info_dict.items():
                 if "depotFile" in key.decode():
@@ -744,9 +738,9 @@ class P4Client(object):
                         changelists.append([self.__get_dict_value(info_dict, "change"), cl_description])
 
         if descriptions:
-            return [pair[1] for pair in changelists]
+            return [pair[1] for pair in changelists].append("default")
         else:
-            return [int(pair[0]) for pair in changelists]
+            return [int(pair[0]) for pair in changelists].append("default")
 
     def get_or_make_changelist(self, changelist_description, case_sensitive=False):
         """
