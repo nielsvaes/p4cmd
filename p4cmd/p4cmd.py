@@ -710,7 +710,7 @@ class P4Client(object):
 
         return depot_paths
 
-    def get_pending_changelists(self, description_filter="", perfect_match_only=False, case_sensitive=False, descriptions=False):
+    def get_pending_changelists(self, description_filter="", perfect_match_only=False, case_sensitive=False, descriptions=False, include_default=True):
         """
         Returns all the pending change lists, filtered on the changelist description
 
@@ -718,10 +718,12 @@ class P4Client(object):
         :param perfect_match_only: *bool* if True, will only return CLs with the exact matching filter
         :param case_sensitive: *bool*
         :param descriptions: *bool* if set to True, will return the changelist description instead of the changelist number
+        :param include_default: *bool* if set to True, will add "default" to the returned changelists
         :return: *list* with changelist numbers as ints
         """
         info_dicts = self.run_cmd("changes", args=["-l", "-s", "pending", "-u", self.user, "-c", self.client])
         changelists = []
+        return_list = []
 
         for info_dict in info_dicts:
             description_filter = description_filter.rstrip("\n")
@@ -744,9 +746,13 @@ class P4Client(object):
                         changelists.append([self.__get_dict_value(info_dict, "change"), cl_description])
 
         if descriptions:
-            return [pair[1] for pair in changelists]
+            return_list = [pair[1] for pair in changelists]
         else:
-            return [int(pair[0]) for pair in changelists]
+            return_list = [int(pair[0]) for pair in changelists]
+        if include_default:
+            return_list.append("default")
+
+        return return_list
 
     def get_or_make_changelist(self, changelist_description, case_sensitive=False):
         """
