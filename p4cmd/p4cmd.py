@@ -737,9 +737,12 @@ class P4Client(object):
                         changelists.append([self.__get_dict_value(info_dict, "change"), cl_description])
 
         if descriptions:
-            return [pair[1] for pair in changelists].append("default")
+            return_list = [pair[1] for pair in changelists]
+            return_list.append("default")
         else:
-            return [int(pair[0]) for pair in changelists].append("default")
+            return_list = [int(pair[0]) for pair in changelists]
+            return_list.append("default")
+        return return_list
 
     def get_or_make_changelist(self, changelist_description, case_sensitive=False):
         """
@@ -761,7 +764,7 @@ class P4Client(object):
             case_sensitive=case_sensitive,
         )
 
-        if len(changelists):
+        if len(changelists) > 1: # > 1 because "default" is always appended
             return changelists[0]
         else:
             return self.make_new_changelist(description=changelist_description)
