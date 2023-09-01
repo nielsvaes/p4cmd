@@ -703,6 +703,22 @@ class P4Client(object):
 
         return depot_paths
 
+    def get_all_files_in_all_changelists(self):
+        """
+        Does what it says on the box
+
+        :return: *list*
+        """
+        depot_paths = []
+
+        info_dicts = self.run_cmd("opened")
+        for info_dict in info_dicts:
+            for key, value in info_dict.items():
+                if "depotFile" in key.decode():
+                    depot_paths.append(value.decode())
+
+        return depot_paths
+
     def get_pending_changelists(self, description_filter="", perfect_match_only=False, case_sensitive=False, descriptions=False):
         """
         Returns all the pending change lists, filtered on the changelist description
