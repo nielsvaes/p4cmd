@@ -7,7 +7,7 @@ data_files_to_include = ["*.png"]
 
 setuptools.setup(
     name="p4cmd",
-    version="2.3.5",
+    version="2.4.0",
     author="Niels Vaes",
     license='MIT',
     author_email="nielsvaes@gmail.com",
