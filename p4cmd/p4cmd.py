@@ -985,13 +985,14 @@ class P4Client(object):
         current_dir = starting_dir
 
         while last_dir != current_dir:
-            for item in os.listdir(current_dir):
-                if item == ".p4config":
+            if os.path.exists(current_dir):
+                if ".p4config" in os.listdir(current_dir):
                     logging.info(".p4config found in %s" % current_dir)
                     self.perforce_root = current_dir
                     return True
+
             last_dir = current_dir
-            current_dir = os.path.abspath(current_dir + os.path.sep + os.pardir)
+            current_dir = os.path.dirname(last_dir)
         return False
 
     def __validate_file_list(self, file_list):
