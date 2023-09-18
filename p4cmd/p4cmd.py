@@ -420,8 +420,11 @@ class P4Client(object):
         :param changelist: string or int value
         :param unchanged_only: *bool*
         """
-        files = self.get_files_in_changelist(changelist)
-        return self.revert_files(files, unchanged_only=unchanged_only)
+        changelist = self.__ensure_changelist(changelist)
+        if unchanged_only:
+            return self.run_cmd("revert", args=["-a", "-c", changelist])
+        else:
+            return self.run_cmd("revert", args=["-c", changelist, "//..."])
 
     def submit_changelist(self, changelist, revert_unchanged_files=True):
         """
