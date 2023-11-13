@@ -316,7 +316,7 @@ class P4Client(object):
 
         for info_dict in info_dicts:
             if self.__get_dict_value(info_dict, "code") == "error" and not self.silent:
-                print(self.__get_dict_value(info_dict, "data"))
+                logging.error(self.__get_dict_value(info_dict, "data"))
 
         return info_dicts
 
@@ -670,7 +670,7 @@ class P4Client(object):
         info_dicts = self.run_cmd("edit", args=["-c", changelist], file_list=file_list)
         for info_dict in info_dicts:
             if self.__get_dict_value(info_dict, "code") == "error" and not self.silent:
-                print(self.__get_dict_value(info_dict, "data"))
+                logging.error(self.__get_dict_value(info_dict, "data"))
         return info_dicts
 
     def add_files(self, file_list, changelist="default"):
@@ -1044,7 +1044,6 @@ def split_list_into_strings_of_length(input_list, max_length=100):
 
     return clamped_str_list
 
-
 def decode_dictionaries(info_dicts):
     """
     Decode list of dictionary keys and values into unicode from bytes
@@ -1061,15 +1060,3 @@ def convert_to_list(value):
     else:
         converted = [value]
     return converted
-
-
-class HostOnline(object):
-    def __init__(self, host, port):
-        self.host = host
-        self.port = port
-
-    def __enter__(self):
-        pass
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        pass
