@@ -505,7 +505,7 @@ class P4Client(object):
 
         changelist = self.__ensure_changelist(changelist)
 
-        info_dicts = self.run_cmd("reconcile", args=["-a", "-e", "-d", "-c", changelist], file_list=file_list)
+        info_dicts = self.run_cmd("reconcile", args=["-c", changelist], file_list=file_list)
         return info_dicts
 
     def reconcile_offline_folders(self, folder_list, changelist="default"):
@@ -529,7 +529,7 @@ class P4Client(object):
 
         changelist = self.__ensure_changelist(changelist)
 
-        info_dicts = self.run_cmd("reconcile", args=["-a", "-e", "-d", "-c", changelist], file_list=cleaned_folder_list)
+        info_dicts = self.run_cmd("reconcile", args=["-c", changelist], file_list=cleaned_folder_list)
         return info_dicts
 
     def delete_files(self, file_list, changelist="default"):
