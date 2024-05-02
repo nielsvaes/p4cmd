@@ -212,3 +212,18 @@ class P4File(object):
 
     def set_last_submitted_by(self, value):
         self.__last_submitted_by = value
+
+    def __eq__(self, other):
+        if not isinstance(other, P4File):
+            return NotImplemented
+
+        private_attributes = [
+            '_P4File__local_file_path', '_P4File__depot_file_path', '_P4File__last_submitted_by',
+            '_P4File__have_revision', '_P4File__head_revision', '_P4File__checked_out_by',
+            '_P4File__last_submit_time', '_P4File__action', '_P4File__raw_data', '_P4File__head_action'
+        ]
+
+        for attr in private_attributes:
+            if getattr(self, attr) != getattr(other, attr):
+                return False
+        return True
