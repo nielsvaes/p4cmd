@@ -696,6 +696,7 @@ class P4Client(object):
         :param changelist: *string* or *int* changelist number
         :return: *list* of depot paths
         """
+        changelist = self.__ensure_changelist(changelist)
         depot_paths = []
 
         info_dicts = self.run_cmd("opened", args=["-c", changelist])
