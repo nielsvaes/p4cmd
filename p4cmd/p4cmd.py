@@ -51,7 +51,6 @@ class P4Client(object):
             if self.server is None:
                 raise p4errors.WorkSpaceError("Could not find P4PORT")
 
-
     @classmethod
     def from_env(cls, *args, **kwargs):
         """
@@ -116,23 +115,24 @@ class P4Client(object):
                 if len(command) > MAX_CMD_LEN:
                     # This shouldn't happen, but just in case the command prefix end up really long
                     logging.warning(f"Command length: {format(len(command))} exceeds MAX_CMD_LEN {MAX_CMD_LEN} on command: {MAX_CMD_LEN}")
-                pipe = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, shell=True)
-                output = pipe.stdout
 
-                try:
-                    while True:
-                        value_dict = marshal.load(output)
-                        dict_list.append(value_dict)
-                except EOFError:
-                    pass
-                except ValueError as error:
-                    output_dict = {
-                        "command": command,
-                        "code": "error",
-                        "error": str(error),
-                        "raw_output": subprocess.check_output(command, stderr=subprocess.STDOUT, shell=True)
-                    }
-                    dict_list.append(output_dict)
+                with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, shell=True) as pipe:
+                    output = pipe.stdout
+                    try:
+                        while True:
+                            value_dict = marshal.load(output)
+                            dict_list.append(value_dict)
+                    except EOFError:
+                        pass
+                    except ValueError as error:
+                        output_dict = {
+                            "command": command,
+                            "code": "error",
+                            "error": str(error),
+                            "raw_output": subprocess.check_output(command, stderr=subprocess.STDOUT, shell=True)
+                        }
+                        dict_list.append(output_dict)
+                    pipe.kill()
 
         return dict_list
 
@@ -869,6 +869,7 @@ class P4Client(object):
 
         try:
             sock = socket.create_connection((host, port), timeout=2)
+            sock.close()
             return True
         except:
             return False
