@@ -1,3 +1,4 @@
+from p4cmd import VERSION
 import setuptools
 
 with open("README.md", "r") as fh:
@@ -7,7 +8,7 @@ data_files_to_include = ["*.png"]
 
 setuptools.setup(
     name="p4cmd",
-    version="2.4.10",
+    version=VERSION,
     author="Niels Vaes",
     license='MIT',
     author_email="nielsvaes@gmail.com",
