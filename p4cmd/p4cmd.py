@@ -738,7 +738,10 @@ class P4Client(object):
 
         for info_dict in info_dicts:
             description_filter = description_filter.rstrip("\n")
-            cl_description = self.__get_dict_value(info_dict, "desc", "").rstrip("\n")
+            try:
+                cl_description = self.__get_dict_value(info_dict, "desc").rstrip("\n")
+            except AttributeError as err:
+                raise p4errors.P4cmdError(err)
 
             if not cl_description:
                 logging.warning(f"The CL description is empty in this return object!\n{pformat(info_dict)}")
