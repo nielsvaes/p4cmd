@@ -3,7 +3,7 @@ import marshal
 import sys
 import subprocess
 import socket
-import time
+from pprint import pformat
 
 import logging
 
@@ -738,7 +738,10 @@ class P4Client(object):
 
         for info_dict in info_dicts:
             description_filter = description_filter.rstrip("\n")
-            cl_description = self.__get_dict_value(info_dict, "desc").rstrip("\n")
+            cl_description = self.__get_dict_value(info_dict, "desc", "").rstrip("\n")
+
+            if not cl_description:
+                logging.warning(f"The CL description is empty in this return object!\n{pformat(info_dict)}")
 
             if not case_sensitive:
                 description_filter = description_filter.lower()
