@@ -9,6 +9,7 @@ import logging
 
 from . import p4errors
 from .p4file import P4File, Status
+from .utils import split_list_into_strings_of_length, convert_to_list, decode_dictionaries, validate_not_empty
 
 MAX_CMD_LEN = 8190
 MAX_ARG_LEN = 8000  # max length of args string when combined, close to max, but leaving some extra margin
@@ -206,6 +207,7 @@ class P4Client(object):
         else:
             raise p4errors.WorkSpaceError("Tried to set a workspace/client({}) that did not exist".format(workspace))
 
+    @validate_not_empty
     def files_to_p4files(self, file_list, allow_invalid_files=False):
         """
         Turns a list of files into P4File objects. If the Perforce server can't be reached, returns a list of P4Files
@@ -232,6 +234,7 @@ class P4Client(object):
                 p4files.append(perforce_file)
             return p4files
 
+    @validate_not_empty
     def folder_to_p4files(self, folder, include_subfolders=True, allow_invalid_files=False):
         """
         Returns all the files in a folder as a list of P4File objects. Uses the files_to_p4files function if the host
@@ -301,7 +304,8 @@ class P4Client(object):
             if len(changelists):
                 return True
             return False
-
+    
+    @validate_not_empty
     def move_files_to_changelist(self, file_list, changelist="default"):
         """
         Moves the files in file_list to a changelist. Makes a new changelist if the given one doesn't exist.
@@ -371,6 +375,7 @@ class P4Client(object):
             return True
         return False
 
+    @validate_not_empty
     def revert_files(self, file_list, unchanged_only=False):
         """
         Reverts files in file_list
@@ -389,6 +394,8 @@ class P4Client(object):
 
         return info_dicts
 
+
+    @validate_not_empty
     def revert_folders(self, folder_list, unchanged_only=False):
         """
         Recursively reverts complete folders
@@ -442,6 +449,7 @@ class P4Client(object):
         info_dicts = self.run_cmd("submit", args=["-c", changelist, "--parallel", f"threads={self.max_parallel_connections}"])
         return info_dicts
 
+    @validate_not_empty
     def sync_folders(self, folder_list):
         """
         Recursively syncs complete folders
@@ -463,6 +471,7 @@ class P4Client(object):
         info_dicts = self.run_cmd("sync", args=["--parallel", f"threads={self.max_parallel_connections}"], file_list=cleaned_folder_list)
         return info_dicts
 
+    @validate_not_empty
     def sync_files(self, file_list, revision=-1, verify=True, force=False):
         """
         Syncs files
@@ -493,6 +502,7 @@ class P4Client(object):
 
         return info_dicts
 
+    @validate_not_empty
     def reconcile_offline_files(self, file_list, changelist="default"):
         """
         Adds, opens for edit or delete any files that were changed outside Perforce
@@ -508,6 +518,7 @@ class P4Client(object):
         info_dicts = self.run_cmd("reconcile", args=["-c", changelist], file_list=file_list)
         return info_dicts
 
+    @validate_not_empty
     def reconcile_offline_folders(self, folder_list, changelist="default"):
         """
         Adds, opens for edit or delete any files in the rootfolder + subfolders that were changed outside Perforce
@@ -532,6 +543,7 @@ class P4Client(object):
         info_dicts = self.run_cmd("reconcile", args=["-c", changelist], file_list=cleaned_folder_list)
         return info_dicts
 
+    @validate_not_empty
     def delete_files(self, file_list, changelist="default"):
         """
         Marks files for delete
@@ -582,6 +594,7 @@ class P4Client(object):
 
         return files_and_cl
 
+    @validate_not_empty
     def add_or_edit_folders(self, folders, include_subfolders=True, changelist="default"):
         """
         Marks a folder for add or edit
@@ -605,6 +618,8 @@ class P4Client(object):
 
         return self.add_or_edit_files(all_files, changelist=changelist)
 
+
+    @validate_not_empty
     def add_or_edit_files(self, file_list, changelist="default"):
         """
         Marks the files in file_list for add if they are new, or edit if they are already versioned
@@ -653,6 +668,7 @@ class P4Client(object):
                 return int(self.__get_dict_value(info_dict, "change"))
         return -1
 
+    @validate_not_empty
     def edit_files(self, file_list, changelist="default"):
         """
         Marks the files in file_list for edit
@@ -673,6 +689,7 @@ class P4Client(object):
                 logging.error(self.__get_dict_value(info_dict, "data"))
         return info_dicts
 
+    @validate_not_empty
     def add_files(self, file_list, changelist="default"):
         """
         Marks the files in file_list for add
@@ -808,6 +825,7 @@ class P4Client(object):
 
         return workspaces
 
+    @validate_not_empty
     def get_depot_paths(self, paths):
         """
         Returns the depot path of the given files or folders, based on the client
@@ -827,6 +845,8 @@ class P4Client(object):
         depot_paths = [self.__get_dict_value(info, "depotFile").rstrip("/...") for info in info_dicts]
         return depot_paths
 
+
+    @validate_not_empty
     def get_local_paths(self, paths):
         """
         Returns the local path of the given files or folders, based on the client
@@ -847,6 +867,7 @@ class P4Client(object):
         local_paths = [self.__get_dict_value(info, "path") for info in info_dicts]
         return local_paths
 
+    @validate_not_empty
     def get_history(self, paths):
         """
         Returns changes for the given paths
@@ -1021,50 +1042,3 @@ class P4Client(object):
             if not f.lower().startswith(self.perforce_root.lower()):
                 raise Exception(f'{f} is not under perforce root: {self.perforce_root}')
 
-
-def split_list_into_strings_of_length(input_list, max_length=100):
-    """
-    From incoming list of strings, build joined together strings that are clamped to a max size
-
-    :param input_list:
-    :param max_length: str clamp length
-    """
-    full_list_str = " ".join([str(arg) for arg in input_list])
-
-    # if str is already below max length, just return it wrapped in a list
-    if not len(full_list_str) > max_length:
-        return [full_list_str]
-
-    # Keep appending on the last string until we hit the max length
-    # then add a new entry to the list and keep appending
-    clamped_str_list = [""]
-    for arg in input_list:
-        current_str = clamped_str_list[-1]
-        new_str = "{}{} ".format(current_str, arg)  # the space is deliberately placed, since the first item has no len
-
-        # if new string is too long, just append the arg as a new item and skip to next arg
-        if len(new_str) >= max_length:
-            clamped_str_list.append("{} ".format(arg))  #
-            continue
-
-        # set latest to updated string
-        clamped_str_list[-1] = new_str
-
-    return clamped_str_list
-
-def decode_dictionaries(info_dicts):
-    """
-    Decode list of dictionary keys and values into unicode from bytes
-    """
-    decoded_dicts = []
-    for info_dict in info_dicts:
-        decoded_dict = {k.decode(): v.decode() for k, v in info_dict.items()}
-        decoded_dicts.append(decoded_dict)
-    return decoded_dicts
-
-def convert_to_list(value):
-    if isinstance(value, tuple):
-        converted = [v for v in value]
-    else:
-        converted = [value]
-    return converted
