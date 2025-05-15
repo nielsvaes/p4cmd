@@ -29,7 +29,7 @@ os.environ["P4ROOT"] = "~/nisse/projects/raw"
 client = p4cmd.P4Client.from_env()
 ```
 
-Most of the functions are pretty self explanatory and have docstrings about how they work. 
+Most of the functions are pretty self-explanatory and have docstrings about how they work. 
 
 There are 2 functions called `file_to_p4files` and `folder_to_p4files` that use the `P4File` class in `p4file`. 
 
