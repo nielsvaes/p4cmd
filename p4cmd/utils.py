@@ -60,18 +60,18 @@ def validate_not_empty(func):
     Decorator to ensure file and folder lists are not empty before proceeding with Perforce operations
     """
 
-    def wrapper(self, file_or_folder_list, *args, **kwargs):
-        # Convert to list if it's not already
-        if not isinstance(file_or_folder_list, list):
+    def wrapper(*args, **kwargs):
+        file_or_folder_list = args[1] if len(args) > 1 else None
+
+        if file_or_folder_list is not None and not isinstance(file_or_folder_list, list):
             file_or_folder_list = convert_to_list(file_or_folder_list)
 
-        # Return early if the list is empty
         if not file_or_folder_list:
-            if not self.silent:
-                logging.warning(f"Empty file list provided to {func.__name__}, operation skipped")
+            logging.warning(f"Empty file list provided to {func.__name__}, operation skipped.")
+            logging.warning(f"args: {args}")
+            logging.warning(f"kwargs: {kwargs}")
             return []
 
-        # Call the original function with the validated list
-        return func(self, file_or_folder_list, *args, **kwargs)
+        return func(*args, **kwargs)
 
     return wrapper
