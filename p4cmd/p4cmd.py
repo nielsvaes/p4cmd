@@ -51,6 +51,8 @@ class P4Client(object):
             self.server = self.get_p4_setting("P4PORT")
             if self.server is None:
                 raise p4errors.WorkSpaceError("Could not find P4PORT")
+        
+        self.depot_root = self.get_depot_paths([self.perforce_root])[0]
 
     @classmethod
     def from_env(cls, *args, **kwargs):
@@ -595,6 +597,117 @@ class P4Client(object):
         return files_and_cl
 
     @validate_not_empty
+    def shelve_files(self, changelist, file_list=None, revert_after_shelve=False, force=False):
+        """
+        Shelves files in a changelist. If no files are specified, shelves all files in the changelist.
+    
+        :param changelist: *string* or *int* changelist number or description
+        :param file_list: *list* or *None* list of files to shelve. If None, shelves all files in the changelist
+        :param revert_after_shelve: *bool* if True, reverts the files after shelving them
+        :param force: *bool* if True, forces the shelving operation even if files are already shelved
+        :return: *list* of info dictionaries
+        """
+        changelist = self.__ensure_changelist(changelist)
+        
+        # if no files specified, get all files in the changelist
+        if file_list is None:
+            file_list = self.get_files_in_changelist(changelist)
+        else:
+            file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+            if not self.silent:
+                self.__validate_file_list(file_list)
+        
+        # if there are no files to shelve, return empty list
+        if not file_list:
+            if not self.silent:
+                logging.warning(f"No files to shelve in changelist {changelist}")
+            return []
+        
+        # iuild args list based on options
+        args = ["-c", str(changelist)]
+        if force:
+            args.append("-f")
+        
+        # run the shelve command
+        info_dicts = self.run_cmd("shelve", args=args, file_list=file_list)
+        
+        for info_dict in info_dicts:
+            if self.__get_dict_value(info_dict, "code") == "error" and not self.silent:
+                logging.error(self.__get_dict_value(info_dict, "data"))
+        
+        # revert files if requested
+        if revert_after_shelve and file_list:
+            revert_info_dicts = self.revert_files(file_list)
+            # add revert info to the return data
+            info_dicts.extend(revert_info_dicts)
+        
+        return info_dicts
+
+    def unshelve_files(self, changelist, file_list=None, target_changelist="default", force=False, delete_shelved_files=False):
+        """
+        Unshelves files from a shelved changelist. If no files are specified, unshelves all files.
+    
+        :param changelist: *string* or *int* source changelist number containing shelved files
+        :param file_list: *list* or *None* list of files to unshelve. If None, unshelves all files
+        :param target_changelist: *string* or *int* target changelist to unshelve files into
+        :param force: *bool* if True, forces the unshelve operation even if files are already opened
+        :param delete_shelved_files: *bool* if True, deletes the shelved files after unshelving them
+        :return: *list* of info dictionaries
+        """
+        source_changelist = self.__ensure_changelist(changelist)
+        target_changelist = self.__ensure_changelist(target_changelist)
+        
+        # build the arguments list
+        args = []
+        
+        # add force flag if requested
+        if force:
+            args.append("-f")
+        
+        # add source changelist (required)
+        args.extend(["-s", str(source_changelist)])
+        
+        # add target changelist if specified and not default
+        if target_changelist != "default":
+            args.extend(["-c", str(target_changelist)])
+        
+        # prepare file list if provided
+        if file_list is not None:
+            file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+            if not self.silent:
+                self.__validate_file_list(file_list)
+        else:
+            file_list = []
+        
+        # run the unshelve command
+        info_dicts = self.run_cmd("unshelve", args=args, file_list=file_list)
+        
+        # check for errors in the unshelve operation
+        has_error = False
+        for info_dict in info_dicts:
+            if self.__get_dict_value(info_dict, "code") == "error" and not self.silent:
+                logging.error(self.__get_dict_value(info_dict, "data"))
+                has_error = True
+        
+        # delete shelved files if requested and unshelve was successful
+        if delete_shelved_files and not has_error:
+            # build the arguments for the shelve -d command
+            delete_args = ["-d", "-c", str(source_changelist)]
+            
+            # if file_list provided, use it for the delete operation as well
+            delete_info_dicts = self.run_cmd("shelve", args=delete_args, file_list=file_list)
+            
+            # check for errors in the delete operation
+            for info_dict in delete_info_dicts:
+                if self.__get_dict_value(info_dict, "code") == "error" and not self.silent:
+                    logging.error(self.__get_dict_value(info_dict, "data"))
+            
+            # add the delete info to the return data
+            info_dicts.extend(delete_info_dicts)
+        
+        return info_dicts
+
+    @validate_not_empty
     def add_or_edit_folders(self, folders, include_subfolders=True, changelist="default"):
         """
         Marks a folder for add or edit
@@ -1039,6 +1152,6 @@ class P4Client(object):
         # Easy utility to check that the file is underneath the correct perforce root
         # Quicker than waiting for the result of a p4 fstat
         for f in file_list:
-            if not f.lower().startswith(self.perforce_root.lower()):
-                raise Exception(f'{f} is not under perforce root: {self.perforce_root}')
+            if not f.lower().startswith(self.perforce_root.lower()) and not f.lower().startswith(self.depot_root.lower()):
+                raise Exception(f'{f} is not under perforce root: {self.perforce_root}, {self.depot_root}')
 
