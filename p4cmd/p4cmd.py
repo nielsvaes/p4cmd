@@ -306,7 +306,73 @@ class P4Client(object):
             if len(changelists):
                 return True
             return False
+
+    def update_changelist_description(self, changelist, new_description):
+        """
+        Updates the description of an existing changelist.
     
+        :param changelist: *string* or *int* changelist number
+        :param new_description: *string* new description for the changelist
+        :return: *bool* True if successful, False otherwise
+        """
+        
+        # ... not super elegant, but it works
+        try:
+            changelist = self.__ensure_changelist(changelist)
+    
+            # do some formatting so that we have the proper indentation
+            formatted_description = []
+            for line in new_description.split('\n'):
+                formatted_description.append(f"\t{line}")
+            formatted_description = '\n'.join(formatted_description)
+    
+            output = subprocess.check_output(f'p4 change -o {changelist}', shell=True).decode()
+            
+            # Split the output into sections based on field names
+            sections = []
+            current_section = []
+            current_field = None
+            
+            # take the output and start parsing it
+            for line in output.split('\n'):
+                # check if it's a new field
+                if line.strip() and ':' in line and not line.startswith('\t'):
+                    # if it is, save the previous section
+                    if current_field:
+                        sections.append((current_field, current_section))
+                    # now start a new section
+                    current_field = line.split(':', 1)[0].strip()
+                    current_section = [line]
+                else:
+                    # if it's not a new field, add to the current section
+                    current_section.append(line)
+            
+            # add the last section
+            if current_field:
+                sections.append((current_field, current_section))
+            
+            # new remake the Description field with the update description
+            new_output = []
+            for field, section_lines in sections:
+                if field == "Description":
+                    # replace the description section
+                    new_output.append(section_lines[0])  # keep the "Description:" line because perforce needs this
+                    new_output.append(formatted_description)
+                else:
+                    # keep everything else as-is
+                    new_output.extend(section_lines)
+            
+            updated_output = '\n'.join(new_output)
+            
+            # TODO: modify run_cmd to allow input so that commands like this can also run through it.
+            result = subprocess.check_output(f'p4 change -i', input=updated_output.encode(), shell=True).decode()
+            
+            return True
+        except Exception as e:
+            if not self.silent:
+                logging.error(f"Failed to update changelist description: {e}")
+            return False
+        
     @validate_not_empty
     def move_files_to_changelist(self, file_list, changelist="default"):
         """
