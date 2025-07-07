@@ -629,16 +629,26 @@ class P4Client(object):
         info_dicts = self.run_cmd("delete", args=["-c", changelist], file_list=file_list)
         return info_dicts
 
-    def delete_changelist(self, changelist="default", perfect_match_only=False, case_sensitive=False):
+    def delete_changelist(self, changelist, perfect_match_only=False, case_sensitive=False, delete_shelved_files=False, obliterate=False):
         """
-        Deletes a changelist via changelist number or description
+        Deletes a changelist via changelist number or description. Will fail if any files are checked out or shelved files exist.
         :param changelist: *string* or *int* change list number
         :param perfect_match_only: bool* only delete if there's a perfect match of the changelist description
         :param case_sensitive: *bool*
+        :param delete_shelved_files: *bool* If True, will delete all shelved files and then delete the CL. 
+        :param obliterate: *bool* If True, will revert all files, deleted shelved files and then delete the CL
         """
         info_dicts = []
         cl_num = self.get_pending_changelists(changelist, perfect_match_only, case_sensitive)
         for cl in cl_num:
+            # revert all files, then make sure shelved files are also deleted
+            if obliterate:
+                info_dicts.append(self.revert_changelist(changelist=cl))
+                delete_shelved_files = True
+            
+            if delete_shelved_files:
+                info_dicts.append(self.delete_shelf(cl))
+            
             info_dicts.append(self.run_cmd('change', args=['-d', cl]))
             # TODO: Break down info dicts and look for errors
         return info_dicts
@@ -772,6 +782,48 @@ class P4Client(object):
             info_dicts.extend(delete_info_dicts)
         
         return info_dicts
+
+    def delete_shelf(self, changelist):
+        """
+        Deletes all shelved files in a changelist without deleting the changelist itself.
+        
+        :param changelist: *string* or *int* changelist number
+        :return: *list* of info dictionaries
+        """
+        try:
+            # Ensure the changelist exists and is a number
+            changelist = self.__ensure_changelist(changelist)
+            
+            # Don't allow deleting shelves from the default changelist
+            if changelist == "default":
+                if not self.silent:
+                    logging.error("Cannot delete shelved files from the default changelist")
+                return [{"code": "error", "data": "Cannot delete shelved files from the default changelist"}]
+            
+            # Check if the changelist has shelved files
+            has_shelved_files = False
+            info_dicts = self.run_cmd("describe", args=["-S", str(changelist)])
+            for info_dict in info_dicts:
+                for key in info_dict.keys():
+                    if b"depotFile" in key:
+                        has_shelved_files = True
+                        break
+                if has_shelved_files:
+                    break
+            
+            if not has_shelved_files:
+                if not self.silent:
+                    logging.warning(f"No shelved files found in changelist {changelist}")
+                return [{"code": "info", "data": f"No shelved files found in changelist {changelist}"}]
+            
+            # Delete all shelved files in the changelist
+            info_dicts = self.run_cmd("shelve", args=["-d", "-c", str(changelist)])
+            return info_dicts
+            
+        except Exception as e:
+            if not self.silent:
+                logging.error(f"Failed to delete shelved files: {e}")
+            return [{"code": "error", "data": str(e)}]
 
     @validate_not_empty
     def add_or_edit_folders(self, folders, include_subfolders=True, changelist="default"):
