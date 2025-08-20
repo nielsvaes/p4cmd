@@ -11,6 +11,93 @@ from . import p4errors
 from .p4file import P4File, Status
 from .utils import split_list_into_strings_of_length, convert_to_list, decode_dictionaries, validate_not_empty
 
+import threading
+import queue
+import time
+from enum import Enum
+from typing import Callable, Any, Dict, List, Optional
+from functools import wraps
+from contextlib import contextmanager
+
+
+class OperationStatus(Enum):
+    """Enum representing the status of a P4 operation"""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class P4Operation:
+    """Represents a P4 operation with its metadata"""
+    
+    # Signal names as class properties for autocomplete and type safety
+    STARTED = 'operation_started'
+    PROGRESS = 'operation_progress'
+    COMPLETED = 'operation_completed'
+    FAILED = 'operation_failed'
+    CANCELLED = 'operation_cancelled'
+    
+    def __init__(self, operation_id: str, method_name: str, args: tuple, kwargs: dict):
+        self.operation_id = operation_id
+        self.method_name = method_name
+        self.args = args
+        self.kwargs = kwargs
+        self.status = OperationStatus.PENDING
+        self.result = None
+        self.error = None
+        self.start_time = None
+        self.end_time = None
+        self.progress = 0.0
+        
+    def duration(self) -> Optional[float]:
+        """Returns the duration of the operation in seconds, or None if not completed"""
+        if self.start_time and self.end_time:
+            return self.end_time - self.start_time
+        return None
+        
+    def get_argument(self, index: int, default=None):
+        """
+        Get a positional argument by index
+        
+        :param index: Index of the argument
+        :param default: Default value if index is out of range
+        :return: Argument value or default
+        """
+        try:
+            return self.args[index]
+        except IndexError:
+            return default
+            
+    def get_keyword_argument(self, key: str, default=None):
+        """
+        Get a keyword argument by key
+        
+        :param key: Keyword argument name
+        :param default: Default value if key doesn't exist
+        :return: Argument value or default
+        """
+        return self.kwargs.get(key, default)
+
+
+@contextmanager
+def RunAsThreaded(p4_client):
+    """
+    Context manager to run P4 operations in threaded mode
+    
+    Usage:
+    with RunAsThreaded(p4_client):
+        p4_client.sync_folders(["//some/folder"])
+    """
+    old_value = p4_client.next_operation_threaded
+    p4_client.next_operation_threaded = True
+    try:
+        yield
+    finally:
+        p4_client.next_operation_threaded = old_value
+
+
 MAX_CMD_LEN = 8190
 MAX_ARG_LEN = 8000  # max length of args string when combined, close to max, but leaving some extra margin
 
@@ -34,6 +121,28 @@ class P4Client(object):
         self.user = user
         self.client = client
         self.server = server
+
+        # Threading control flags
+        self.run_all_threaded = False
+        self.next_operation_threaded = False
+        
+        # Threading components (initialized on first use)
+        self._operation_queue = None
+        self._worker_thread = None
+        self._shutdown_event = None
+        self._operation_counter = 0
+        self._operations = {}
+        self._lock = threading.Lock()
+        self._threading_initialized = False
+        
+        # Signal callbacks
+        self._callbacks = {
+            P4Operation.STARTED: [],
+            P4Operation.PROGRESS: [],
+            P4Operation.COMPLETED: [],
+            P4Operation.FAILED: [],
+            P4Operation.CANCELLED: []
+        }
 
         if not self.__p4config_exists():
             if not silent:
@@ -277,11 +386,18 @@ class P4Client(object):
         Makes a new numbered changelist
 
         :param description: *string* description of the changelist
-        :return: *string* changelist number
+        :return: *string* changelist number or operation ID if threaded
         """
+        # Check if this operation should run threaded
+        if self._should_run_threaded():
+            return self._queue_operation('make_new_changelist', description)
+            
+        return self._sync_make_new_changelist(description)
+        
+    def _sync_make_new_changelist(self, description):
+        """Synchronous implementation of make_new_changelist"""
         if not self.host_online():
             logging.warning("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
-            #raise p4errors.ServerOffline("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
             return
 
         output = subprocess.check_output('p4 --field "Description=%s" --field "Files=" change -o | p4 change -i' % description,
@@ -382,7 +498,14 @@ class P4Client(object):
         :param changelist: *string* or *int* changelist description or changelist number
         :return: *list* of info dictionaries
         """
-        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        # Check if this operation should run threaded
+        if self._should_run_threaded():
+            return self._queue_operation('move_files_to_changelist', file_list, changelist)
+            
+        return self._sync_move_files_to_changelist(file_list, changelist)
+        
+    def _sync_move_files_to_changelist(self, file_list, changelist="default"):
+        """Synchronous implementation of move_files_to_changelist"""
         changelist = self.__ensure_changelist(changelist)
         info_dicts = self.run_cmd("reopen", args=["-c", changelist], file_list=file_list)
 
@@ -507,8 +630,16 @@ class P4Client(object):
 
         :param changelist: string or int value.
         :param revert_unchanged_files: *bool* does what it says on the box
-        :return:
+        :return: *list* of info dicts or operation ID if threaded
         """
+        # Check if this operation should run threaded
+        if self._should_run_threaded():
+            return self._queue_operation('submit_changelist', changelist, revert_unchanged_files)
+            
+        return self._sync_submit_changelist(changelist, revert_unchanged_files)
+        
+    def _sync_submit_changelist(self, changelist, revert_unchanged_files=True):
+        """Synchronous implementation of submit_changelist"""
         changelist = self.__ensure_changelist(changelist)
 
         if revert_unchanged_files:
@@ -523,9 +654,16 @@ class P4Client(object):
         Recursively syncs complete folders
 
         :param folder_list: *list* folder paths
-        :return: *list* of info dicts
+        :return: *list* of info dicts or operation ID if threaded
         """
-        folder_list = convert_to_list(folder_list) if not isinstance(folder_list, list) else folder_list
+        # Check if this operation should run threaded
+        if self._should_run_threaded():
+            return self._queue_operation('sync_folders', folder_list)
+            
+        return self._sync_sync_folders(folder_list)
+        
+    def _sync_sync_folders(self, folder_list):
+        """Synchronous implementation of sync_folders"""
         if not self.silent:
             self.__validate_file_list(folder_list)
 
@@ -549,8 +687,16 @@ class P4Client(object):
         This could happen when a synced file is deleted locally
         :param revision: *int* if -1, get latest, else get revision number
         :param force: *bool* force sync
-        :return: *list* of info dicts
+        :return: *list* of info dicts or operation ID if threaded
         """
+        # Check if this operation should run threaded
+        if self._should_run_threaded():
+            return self._queue_operation('sync_files', file_list, revision, verify, force)
+            
+        return self._sync_sync_files(file_list, revision, verify, force)
+        
+    def _sync_sync_files(self, file_list, revision=-1, verify=True, force=False):
+        """Synchronous implementation of sync_files"""
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
         if revision != -1:
             verify = False
@@ -1273,3 +1419,187 @@ class P4Client(object):
             if not f.lower().startswith(self.perforce_root.lower()) and not f.lower().startswith(self.depot_root.lower()):
                 raise Exception(f'{f} is not under perforce root: {self.perforce_root}, {self.depot_root}')
 
+    # Threading Infrastructure Methods
+    def _initialize_threading(self):
+        """Initialize threading components on first use"""
+        if not self._threading_initialized:
+            self._operation_queue = queue.Queue()
+            self._shutdown_event = threading.Event()
+            self._start_worker_thread()
+            self._threading_initialized = True
+            
+    def _start_worker_thread(self):
+        """Start the background worker thread"""
+        if self._worker_thread is None or not self._worker_thread.is_alive():
+            self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+            self._worker_thread.start()
+            
+    def _worker_loop(self):
+        """Main worker thread loop that processes operations"""
+        while not self._shutdown_event.is_set():
+            try:
+                operation = self._operation_queue.get(timeout=1.0)
+                if operation is None:  # Shutdown signal
+                    break
+                    
+                self._execute_operation(operation)
+                self._operation_queue.task_done()
+                
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logging.error(f"Worker thread error: {e}")
+                
+    def _execute_operation(self, operation: P4Operation):
+        """Execute a single P4 operation"""
+        with self._lock:
+            operation.status = OperationStatus.RUNNING
+            operation.start_time = time.time()
+            
+        self._emit_signal(P4Operation.STARTED, operation)
+        
+        try:
+            # Get the method from this instance and call it directly
+            method = getattr(self, f"_sync_{operation.method_name}")
+            result = method(*operation.args, **operation.kwargs)
+            
+            with self._lock:
+                operation.status = OperationStatus.COMPLETED
+                operation.result = result
+                operation.end_time = time.time()
+                operation.progress = 100.0
+                
+            self._emit_signal(P4Operation.COMPLETED, operation)
+            
+        except Exception as e:
+            with self._lock:
+                operation.status = OperationStatus.FAILED
+                operation.error = e
+                operation.end_time = time.time()
+                
+            self._emit_signal(P4Operation.FAILED, operation)
+            
+    def _emit_signal(self, signal_name: str, operation: P4Operation):
+        """Emit a signal to all registered callbacks"""
+        callbacks = self._callbacks.get(signal_name, [])
+        for callback in callbacks:
+            try:
+                callback(operation)
+            except Exception as e:
+                logging.error(f"Error in signal callback {signal_name}: {e}")
+                
+    def _generate_operation_id(self) -> str:
+        """Generate a unique operation ID"""
+        with self._lock:
+            self._operation_counter += 1
+            return f"op_{self._operation_counter:06d}"
+            
+    def _queue_operation(self, method_name: str, *args, **kwargs):
+        """Queue an operation for execution and return its ID or result"""
+        if not self._threading_initialized:
+            self._initialize_threading()
+            
+        operation_id = self._generate_operation_id()
+        operation = P4Operation(operation_id, method_name, args, kwargs)
+        
+        with self._lock:
+            self._operations[operation_id] = operation
+            
+        self._operation_queue.put(operation)
+        return operation_id
+        
+    def _should_run_threaded(self):
+        """Determine if the next operation should run in threaded mode"""
+        result = self.run_all_threaded or self.next_operation_threaded
+        # Only reset the next_operation_threaded flag if we're not in run_all_threaded mode
+        # and if we're not inside a RunAsThreaded context (which manages the flag itself)
+        if self.next_operation_threaded and not self.run_all_threaded:
+            # Don't reset here - let the context manager handle it
+            pass
+        return result
+        
+    # Threading Control Methods
+    def connect_signal(self, signal_name: str, callback: Callable[[P4Operation], None]):
+        """Connect a callback to a signal"""
+        if signal_name not in self._callbacks:
+            raise ValueError(f"Unknown signal: {signal_name}")
+        self._callbacks[signal_name].append(callback)
+        
+    def disconnect_signal(self, signal_name: str, callback: Callable[[P4Operation], None]):
+        """Disconnect a callback from a signal"""
+        if signal_name in self._callbacks and callback in self._callbacks[signal_name]:
+            self._callbacks[signal_name].remove(callback)
+            
+    def get_operation_status(self, operation_id: str) -> Optional[P4Operation]:
+        """Get the status of an operation by ID"""
+        with self._lock:
+            return self._operations.get(operation_id)
+            
+    def get_all_operations(self) -> Dict[str, P4Operation]:
+        """Get all operations and their statuses"""
+        with self._lock:
+            return self._operations.copy()
+            
+    def cancel_operation(self, operation_id: str) -> bool:
+        """Cancel a pending operation"""
+        with self._lock:
+            operation = self._operations.get(operation_id)
+            if operation and operation.status == OperationStatus.PENDING:
+                operation.status = OperationStatus.CANCELLED
+                self._emit_signal(P4Operation.CANCELLED, operation)
+                return True
+        return False
+        
+    def wait_for_operation(self, operation_id: str, timeout: Optional[float] = None) -> Optional[Any]:
+        """Wait for an operation to complete and return its result"""
+        start_time = time.time()
+        while True:
+            operation = self.get_operation_status(operation_id)
+            if not operation:
+                return None
+                
+            if operation.status in [OperationStatus.COMPLETED, OperationStatus.FAILED, OperationStatus.CANCELLED]:
+                if operation.status == OperationStatus.COMPLETED:
+                    return operation.result
+                else:
+                    return None
+                    
+            if timeout and (time.time() - start_time) > timeout:
+                return None
+                
+            time.sleep(0.1)
+            
+    def wait_for_all_operations(self, timeout: Optional[float] = None) -> bool:
+        """Wait for all queued operations to complete"""
+        if not self._threading_initialized:
+            return True
+            
+        if timeout is None:
+            try:
+                self._operation_queue.join()
+                return True
+            except:
+                return False
+        else:
+            start_time = time.time()
+            while True:
+                if self._operation_queue.unfinished_tasks == 0:
+                    return True
+                if (time.time() - start_time) > timeout:
+                    return False
+                time.sleep(0.1)
+                
+    def shutdown_threading(self):
+        """Shutdown the threading system"""
+        if self._threading_initialized:
+            self._shutdown_event.set()
+            self._operation_queue.put(None)
+            if self._worker_thread and self._worker_thread.is_alive():
+                self._worker_thread.join(timeout=5.0)
+                
+    def __del__(self):
+        """Cleanup when object is destroyed"""
+        try:
+            self.shutdown_threading()
+        except:
+            pass
