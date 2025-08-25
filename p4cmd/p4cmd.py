@@ -1129,7 +1129,7 @@ class P4Client(object):
 
         return info_dicts
 
-    def host_online(self, timeout=0.001):
+    def host_online(self, timeout=2.0):
         """
         Checks if the host for this client is online
 
