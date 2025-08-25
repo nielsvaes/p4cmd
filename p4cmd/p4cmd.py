@@ -103,7 +103,8 @@ MAX_ARG_LEN = 8000  # max length of args string when combined, close to max, but
 
 
 class P4Client(object):
-    def __init__(self, perforce_root, user=None, client=None, server=None, silent=True, max_parallel_connections=4):
+    def __init__(self, perforce_root, user=None, client=None, server=None, silent=True, max_parallel_connections=4,
+                 run_threaded=False):
         """
         Make a new P4Client
 
@@ -113,6 +114,14 @@ class P4Client(object):
         :param silent: *bool* if True, suppresses error messages to cut down on terminal spam
         :param max_parallel_connections: *int* max number of connections to use while syncing/submitting. This requires
         the server to have net.parallel.max and net parallel.threads to be > 1
+        :param run_threaded: *bool* If set to True, will run all commands in a separate thread. The client will emit
+        the following signals that you can hook into:
+            P4Operation.STARTED
+            P4Operation.PROGRESS
+            P4Operation.COMPLETED
+            P4Operation.FAILED
+            P4Operation.CANCELLED
+        
         """
         self.perforce_root = perforce_root
         self.silent = silent
@@ -123,7 +132,7 @@ class P4Client(object):
         self.server = server
 
         # Threading control flags
-        self.run_all_threaded = False
+        self.run_all_threaded = run_threaded
         self.next_operation_threaded = False
         
         # Threading components (initialized on first use)
