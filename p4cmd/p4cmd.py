@@ -582,11 +582,14 @@ class P4Client(object):
         return info_dicts
 
     @validate_not_empty
-    def reconcile_offline_files(self, file_list, changelist="default"):
+    def reconcile_offline_files(self, file_list, add=True, edit=True, delete=True, changelist="default"):
         """
         Adds, opens for edit or delete any files that were changed outside Perforce
 
         :param file_list: *list* of local files
+        :param add: *bool* if True, adds new files
+        :param edit: *bool* if True, opens modified files for edit
+        :param delete: *bool* if True, marks deleted files for delete
         :param changelist: string or int value
         :return: *list* of info dicts
         """
@@ -594,15 +597,37 @@ class P4Client(object):
 
         changelist = self.__ensure_changelist(changelist)
 
-        info_dicts = self.run_cmd("reconcile", args=["-c", changelist], file_list=file_list)
+        # Build args based on which operations are enabled
+        args = ["-c", changelist]
+        
+        # Add flags for specific operations
+        if not add and not edit and not delete:
+            # If nothing is enabled, don't do anything
+            return []
+        elif add and edit and delete:
+            # Default behavior - reconcile everything (no additional flags needed)
+            pass
+        else:
+            # Specific operations requested
+            if add:
+                args.append("-a")
+            if edit:
+                args.append("-e")
+            if delete:
+                args.append("-d")
+
+        info_dicts = self.run_cmd("reconcile", args=args, file_list=file_list)
         return info_dicts
 
     @validate_not_empty
-    def reconcile_offline_folders(self, folder_list, changelist="default"):
+    def reconcile_offline_folders(self, folder_list, add=True, edit=True, delete=True, changelist="default"):
         """
         Adds, opens for edit or delete any files in the rootfolder + subfolders that were changed outside Perforce
 
         :param folder_list: *list* folders
+        :param add: *bool* if True, adds new files
+        :param edit: *bool* if True, opens modified files for edit
+        :param delete: *bool* if True, marks deleted files for delete
         :param changelist: string or int value
         :return: *list* of info dicts
         """
@@ -619,7 +644,26 @@ class P4Client(object):
 
         changelist = self.__ensure_changelist(changelist)
 
-        info_dicts = self.run_cmd("reconcile", args=["-c", changelist], file_list=cleaned_folder_list)
+        # Build args based on which operations are enabled
+        args = ["-c", changelist]
+        
+        # Add flags for specific operations
+        if not add and not edit and not delete:
+            # If nothing is enabled, don't do anything
+            return []
+        elif add and edit and delete:
+            # Default behavior - reconcile everything (no additional flags needed)
+            pass
+        else:
+            # Specific operations requested
+            if add:
+                args.append("-a")
+            if edit:
+                args.append("-e")
+            if delete:
+                args.append("-d")
+
+        info_dicts = self.run_cmd("reconcile", args=args, file_list=cleaned_folder_list)
         return info_dicts
 
     @validate_not_empty
