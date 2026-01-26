@@ -243,7 +243,7 @@ class P4Client(object):
             return p4files
 
     @validate_not_empty
-    def folder_to_p4files(self, folder, include_subfolders=True, allow_invalid_files=False):
+    def folder_to_p4files(self, folder, include_subfolders=True, allow_invalid_files=False, specific_file_filter=""):
         """
         Returns all the files in a folder as a list of P4File objects. Uses the files_to_p4files function if the host
         is offline
@@ -252,14 +252,25 @@ class P4Client(object):
         :param include_subfolders: *bool*
         :param allow_invalid_files:  *bool* if set to False, this function will skip any files that are deleted or
         marked for delte
+        :param specific_file_filter: *string* will only return files that have this specific string in it. Can be used
+        for file extensions or just part of the file
         :return: *list* P4Files
         """
 
+        folder = folder.rstrip(r"/")
+        folder = folder.rstrip(r"\\")
+
         if self.host_online():
             if include_subfolders:
-                folder = folder + "..." if folder.endswith("/") or folder.endswith("\\") else folder + "/..."
+                if specific_file_filter:
+                    folder = folder + f"/.../*{specific_file_filter}*"
+                else:
+                    folder = folder + "/..."
             else:
-                folder = folder + "*" if folder.endswith("/") or folder.endswith("\\") else folder + "/*"
+                if specific_file_filter:
+                    folder = folder + f"/*{specific_file_filter}*"
+                else:
+                    folder = folder + "/*"
 
             fstat_output = self.run_cmd("fstat", file_list=[folder])
             p4files = self.fstat_to_p4_files(fstat_output, allow_invalid_files=allow_invalid_files)
@@ -269,13 +280,13 @@ class P4Client(object):
             if include_subfolders:
                 all_files = []
                 for root, dirs, files in os.walk(folder):
-                    for file_name in files:
+                    for file_name in [f for f in files if specific_file_filter in f]:
                         complete_file_path = os.path.join(root, file_name)
-                        if not complete_file_path in files:
+                        if not complete_file_path in all_files:
                             all_files.append(complete_file_path)
             else:
                 all_files = [os.path.join(folder, file) for file in os.listdir(folder) if
-                             os.path.isfile(os.path.join(folder, file))]
+                             os.path.isfile(os.path.join(folder, file)) and specific_file_filter in file]
 
             return self.files_to_p4files(all_files)
 
