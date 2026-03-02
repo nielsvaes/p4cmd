@@ -229,7 +229,7 @@ class P4Client(object):
         file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
 
         if self.host_online():
-            fstat_output = self.run_cmd("fstat", file_list=file_list)
+            fstat_output = self.run_cmd("fstat", args=["-Ol"], file_list=file_list)
             p4files = self.fstat_to_p4_files(fstat_output, allow_invalid_files=allow_invalid_files)
             return p4files
         else:
@@ -272,7 +272,7 @@ class P4Client(object):
                 else:
                     folder = folder + "/*"
 
-            fstat_output = self.run_cmd("fstat", file_list=[folder])
+            fstat_output = self.run_cmd("fstat", args=["-Ol"], file_list=[folder])
             p4files = self.fstat_to_p4_files(fstat_output, allow_invalid_files=allow_invalid_files)
             return p4files
 
@@ -1287,6 +1287,7 @@ class P4Client(object):
             p4file.set_action(self.__get_dict_value(file_dict, "action"))
             p4file.set_head_action(self.__get_dict_value(file_dict, "headAction"))
             p4file.set_raw_data(str(file_dict))
+            p4file.set_file_size(self.__get_dict_value(file_dict, "fileSize"))
 
             opened_by = []
             for key, value in file_dict.items():

@@ -28,6 +28,7 @@ class P4File(object):
         self.__action = None
         self.__raw_data = None
         self.__head_action = None
+        self.__file_size = None
 
     def update_self(self, p4client):
         if self.__depot_file_path is not None:
@@ -213,6 +214,17 @@ class P4File(object):
     def set_last_submitted_by(self, value):
         self.__last_submitted_by = value
 
+    def set_file_size(self, value):
+        self.__file_size = value
+    
+    def get_file_size(self, in_megabyte=True):
+        try:
+            if in_megabyte:
+                return round(int(self.__file_size) / 1048576, 2)
+            return int(self.__file_size)
+        except:
+            return None
+
     def __eq__(self, other):
         if not isinstance(other, P4File):
             return NotImplemented
@@ -220,7 +232,8 @@ class P4File(object):
         private_attributes = [
             '_P4File__local_file_path', '_P4File__depot_file_path', '_P4File__last_submitted_by',
             '_P4File__have_revision', '_P4File__head_revision', '_P4File__checked_out_by',
-            '_P4File__last_submit_time', '_P4File__action', '_P4File__raw_data', '_P4File__head_action'
+            '_P4File__last_submit_time', '_P4File__action', '_P4File__raw_data', '_P4File__head_action',
+            '_P4File__file_size'
         ]
 
         for attr in private_attributes:
