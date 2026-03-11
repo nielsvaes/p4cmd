@@ -1,7 +1,26 @@
 ### P4CMD 🌴
 
-A Python Perforce package that doesn't bring in any other packages to work. 
+A Python Perforce package that doesn't bring in any other packages to work.
 Relies on p4cli installed on the system.
+
+## Development setup
+
+### Running tests
+```bash
+pip install pytest
+pytest tests/ -v
+```
+
+### Pre-commit hook
+A pre-commit hook is included that runs the test suite before every commit,
+preventing broken code from being pushed. To install it:
+```bash
+cp scripts/pre-commit .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+The CI pipeline also runs all tests before publishing to PyPI, so a release
+will never be created from a failing build.
 
 ## p4cmd
 

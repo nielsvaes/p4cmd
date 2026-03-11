@@ -1,0 +1,2 @@
+#!/bin/sh
+python -m pytest tests/ -q || { echo "Tests failed, commit aborted."; exit 1; }
