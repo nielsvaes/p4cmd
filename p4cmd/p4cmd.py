@@ -1,6 +1,5 @@
 import os
 import marshal
-import sys
 import subprocess
 import socket
 from pprint import pformat
@@ -171,18 +170,17 @@ class P4Client(object):
         try:
             # skipping the online check for setting commands
             info_dict = self.run_cmd("set", [setting], use_global_options=False, online_check=False)[0]
-        except:
-            raise p4errors.WorkSpaceError("Unable to find setting %s" % setting)
+        except Exception as e:
+            raise p4errors.WorkSpaceError("Unable to find setting %s" % setting) from e
 
         raw_output = self.__get_dict_value(info_dict, "raw_output", None)
 
         if raw_output is not None:
             if raw_output == b"":
                 return None
-            try:
-                raw_output = raw_output.split("=")[1].split(" ")[0].rstrip()
-            except:
-                raw_output = raw_output.decode("utf-8").split("=")[1].split(" ")[0].rstrip()
+            if isinstance(raw_output, bytes):
+                raw_output = raw_output.decode("utf-8")
+            raw_output = raw_output.split("=")[1].split(" ")[0].rstrip()
 
             if raw_output == "none":
                 return None
@@ -194,7 +192,8 @@ class P4Client(object):
         """
         client = self.get_p4_setting("P4CLIENT")
         if client is None:
-            return self.get_all_workspaces()[0]
+            workspaces = self.get_all_workspaces()
+            return workspaces[0] if workspaces else None
         return client
 
     def find_p4_port(self):
@@ -226,7 +225,7 @@ class P4Client(object):
         marked for delete
         :return: *list* P4Files
         """
-        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        file_list = convert_to_list(file_list)
 
         if self.host_online():
             fstat_output = self.run_cmd("fstat", args=["-Ol"], file_list=file_list)
@@ -236,9 +235,9 @@ class P4Client(object):
             p4files = []
             for file_path in file_list:
                 perforce_file = P4File()
-                perforce_file.set_local_file_path(file_path)
-                perforce_file.set_status(Status.UNKNOWN)
-                perforce_file.set_raw_data("HOST OFFLINE")
+                perforce_file.local_file_path = file_path
+                perforce_file._status_override = Status.UNKNOWN
+                perforce_file.raw_data = "HOST OFFLINE"
                 p4files.append(perforce_file)
             return p4files
 
@@ -316,14 +315,16 @@ class P4Client(object):
         :param changelist: *str* or *int* changelist number or description
         :return: *bool*
         """
-        if type(changelist) == int:
+        if isinstance(changelist, int):
             if changelist in self.get_pending_changelists():
                 return True
+            return False
         else:
             changelist = str(changelist)
             changelists = self.get_pending_changelists(description_filter=changelist, perfect_match_only=True,
                                                        case_sensitive=True)
-            if len(changelists):
+            # get_pending_changelists always appends "default", so a real match requires len > 1
+            if len(changelists) > 1:
                 return True
             return False
 
@@ -402,7 +403,7 @@ class P4Client(object):
         :param changelist: *string* or *int* changelist description or changelist number
         :return: *list* of info dictionaries
         """
-        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        file_list = convert_to_list(file_list)
         changelist = self.__ensure_changelist(changelist)
         info_dicts = self.run_cmd("reopen", args=["-c", changelist], file_list=file_list)
 
@@ -472,7 +473,7 @@ class P4Client(object):
         :param unchanged_only: *bool*
         :return: *list* of info dictionaries
         """
-        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        file_list = convert_to_list(file_list)
         if not self.silent:
             self.__validate_file_list(file_list)
         if unchanged_only:
@@ -481,6 +482,11 @@ class P4Client(object):
             info_dicts = self.run_cmd("revert", file_list=file_list)
 
         return info_dicts
+
+    @staticmethod
+    def _normalize_folder(folder):
+        """Normalizes a folder path for use in P4 recursive operations"""
+        return folder.replace("\\", "/").rstrip("/") + "/..."
 
     @validate_not_empty
     def revert_folders(self, folder_list, unchanged_only=False):
@@ -491,16 +497,11 @@ class P4Client(object):
         :param unchanged_only: *bool*
         :return: *list* of info dicts
         """
-        folder_list = convert_to_list(folder_list) if not isinstance(folder_list, list) else folder_list
+        folder_list = convert_to_list(folder_list)
         if not self.silent:
             self.__validate_file_list(folder_list)
 
-        cleaned_folder_list = []
-        for folder in folder_list:
-            folder = folder.replace("\\", "/")
-            folder = folder.rstrip("/")
-            folder += "/..."
-            cleaned_folder_list.append(folder)
+        cleaned_folder_list = [self._normalize_folder(f) for f in folder_list]
 
         if unchanged_only:
             info_dicts = self.run_cmd("revert", ["-a"], file_list=cleaned_folder_list)
@@ -545,16 +546,11 @@ class P4Client(object):
         :param folder_list: *list* folder paths
         :return: *list* of info dicts
         """
-        folder_list = convert_to_list(folder_list) if not isinstance(folder_list, list) else folder_list
+        folder_list = convert_to_list(folder_list)
         if not self.silent:
             self.__validate_file_list(folder_list)
 
-        cleaned_folder_list = []
-        for folder in folder_list:
-            folder = folder.replace("\\", "/")
-            folder = folder.rstrip("/")
-            folder += "/..."
-            cleaned_folder_list.append(folder)
+        cleaned_folder_list = [self._normalize_folder(f) for f in folder_list]
 
         info_dicts = self.run_cmd("sync", args=["--parallel", f"threads={self.max_parallel_connections}"],
                                   file_list=cleaned_folder_list)
@@ -572,7 +568,7 @@ class P4Client(object):
         :param force: *bool* force sync
         :return: *list* of info dicts
         """
-        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        file_list = convert_to_list(file_list)
         if revision != -1:
             verify = False
             file_list = [f"{path}#{revision}" for path in file_list]
@@ -592,6 +588,20 @@ class P4Client(object):
 
         return info_dicts
 
+    def _build_reconcile_args(self, changelist, add, edit, delete):
+        """Builds the args list for a reconcile command. Returns None if nothing is enabled."""
+        if not add and not edit and not delete:
+            return None
+        args = ["-c", changelist]
+        if not (add and edit and delete):
+            if add:
+                args.append("-a")
+            if edit:
+                args.append("-e")
+            if delete:
+                args.append("-d")
+        return args
+
     @validate_not_empty
     def reconcile_offline_files(self, file_list, add=True, edit=True, delete=True, changelist="default"):
         """
@@ -604,31 +614,12 @@ class P4Client(object):
         :param changelist: string or int value
         :return: *list* of info dicts
         """
-        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
-
+        file_list = convert_to_list(file_list)
         changelist = self.__ensure_changelist(changelist)
-
-        # Build args based on which operations are enabled
-        args = ["-c", changelist]
-        
-        # Add flags for specific operations
-        if not add and not edit and not delete:
-            # If nothing is enabled, don't do anything
+        args = self._build_reconcile_args(changelist, add, edit, delete)
+        if args is None:
             return []
-        elif add and edit and delete:
-            # Default behavior - reconcile everything (no additional flags needed)
-            pass
-        else:
-            # Specific operations requested
-            if add:
-                args.append("-a")
-            if edit:
-                args.append("-e")
-            if delete:
-                args.append("-d")
-
-        info_dicts = self.run_cmd("reconcile", args=args, file_list=file_list)
-        return info_dicts
+        return self.run_cmd("reconcile", args=args, file_list=file_list)
 
     @validate_not_empty
     def reconcile_offline_folders(self, folder_list, add=True, edit=True, delete=True, changelist="default"):
@@ -642,40 +633,15 @@ class P4Client(object):
         :param changelist: string or int value
         :return: *list* of info dicts
         """
-        folder_list = convert_to_list(folder_list) if not isinstance(folder_list, list) else folder_list
+        folder_list = convert_to_list(folder_list)
         if not self.silent:
             self.__validate_file_list(folder_list)
-
-        cleaned_folder_list = []
-        for folder in folder_list:
-            folder = folder.replace("\\", "/")
-            folder = folder.rstrip("/")
-            folder += "/..."
-            cleaned_folder_list.append(folder)
-
+        cleaned_folder_list = [self._normalize_folder(f) for f in folder_list]
         changelist = self.__ensure_changelist(changelist)
-
-        # Build args based on which operations are enabled
-        args = ["-c", changelist]
-        
-        # Add flags for specific operations
-        if not add and not edit and not delete:
-            # If nothing is enabled, don't do anything
+        args = self._build_reconcile_args(changelist, add, edit, delete)
+        if args is None:
             return []
-        elif add and edit and delete:
-            # Default behavior - reconcile everything (no additional flags needed)
-            pass
-        else:
-            # Specific operations requested
-            if add:
-                args.append("-a")
-            if edit:
-                args.append("-e")
-            if delete:
-                args.append("-d")
-
-        info_dicts = self.run_cmd("reconcile", args=args, file_list=cleaned_folder_list)
-        return info_dicts
+        return self.run_cmd("reconcile", args=args, file_list=cleaned_folder_list)
 
     @validate_not_empty
     def delete_files(self, file_list, changelist="default"):
@@ -686,7 +652,7 @@ class P4Client(object):
         :param changelist: *string* or *int* changelist number
         :return: *list* of info dictionaries
         """
-        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        file_list = convert_to_list(file_list)
         if not self.silent:
             self.__validate_file_list(file_list)
 
@@ -756,7 +722,7 @@ class P4Client(object):
         if file_list is None:
             file_list = self.get_files_in_changelist(changelist)
         else:
-            file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+            file_list = convert_to_list(file_list)
             if not self.silent:
                 self.__validate_file_list(file_list)
 
@@ -817,7 +783,7 @@ class P4Client(object):
 
         # prepare file list if provided
         if file_list is not None:
-            file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+            file_list = convert_to_list(file_list)
             if not self.silent:
                 self.__validate_file_list(file_list)
         else:
@@ -902,7 +868,7 @@ class P4Client(object):
         :param include_subfolders: *bool*
         :param changelist: *string* or *int* changelist number or description. Will be made if it doesn't exist.*string* or *int* changelist number
         """
-        folders = convert_to_list(folders) if not isinstance(folders, list) else folders
+        folders = convert_to_list(folders)
 
         all_files = []
         for folder in folders:
@@ -910,7 +876,7 @@ class P4Client(object):
                 for root, dirs, files in os.walk(folder):
                     for file_name in files:
                         complete_file_path = os.path.join(root, file_name)
-                        if not complete_file_path in files:
+                        if complete_file_path not in all_files:
                             all_files.append(complete_file_path)
             else:
                 all_files.extend([os.path.join(folder, file) for file in os.listdir(folder) if
@@ -927,7 +893,7 @@ class P4Client(object):
         :param changelist: *string* or *int* changelist number or description. Will be made if it doesn't exist.*string* or *int* changelist number
         :return: *list* of info dictionaries
         """
-        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        file_list = convert_to_list(file_list)
         if not self.silent:
             self.__validate_file_list(file_list)
 
@@ -940,17 +906,15 @@ class P4Client(object):
             if p4file.is_checked_out():
                 continue
             if p4file.is_local_only():
-                files_for_add.append(p4file.get_local_file_path())
-            elif p4file.get_depot_file_path() is not None:
-                files_for_checkout.append(p4file.get_depot_file_path())
+                files_for_add.append(p4file.local_file_path)
+            elif p4file.depot_file_path is not None:
+                files_for_checkout.append(p4file.depot_file_path)
 
-        if len(files_for_add):
-            info_dicts = self.add_files(file_list, changelist=changelist)
-            all_info_dicts.extend(info_dicts)
+        if files_for_add:
+            all_info_dicts.extend(self.add_files(files_for_add, changelist=changelist))
 
-        if len(files_for_checkout):
-            info_dicts = self.edit_files(file_list, changelist=changelist)
-            all_info_dicts.extend(info_dicts)
+        if files_for_checkout:
+            all_info_dicts.extend(self.edit_files(files_for_checkout, changelist=changelist))
 
         return all_info_dicts
 
@@ -976,7 +940,7 @@ class P4Client(object):
         :param changelist: *string* or *int* changelist number or description. Will be made if it doesn't exist.
         :return: *list* of info dictionaries
         """
-        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        file_list = convert_to_list(file_list)
         if not self.silent:
             self.__validate_file_list(file_list)
 
@@ -996,7 +960,7 @@ class P4Client(object):
         :param changelist:  *string* or *int* changelist number or description. Will be made if it doesn't exist.
         :return: *list* of info dictionaries
         """
-        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        file_list = convert_to_list(file_list)
         if not self.silent:
             self.__validate_file_list(file_list)
 
@@ -1017,9 +981,9 @@ class P4Client(object):
 
         info_dicts = self.run_cmd("opened", args=["-c", changelist])
         for info_dict in info_dicts:
-            for key, value in info_dict.items():
-                if "depotFile" in key.decode():
-                    depot_paths.append(value.decode())
+            depot_file = self.__get_dict_value(info_dict, "depotFile")
+            if depot_file:
+                depot_paths.append(depot_file)
 
         return depot_paths
 
@@ -1033,9 +997,9 @@ class P4Client(object):
 
         info_dicts = self.run_cmd("opened")
         for info_dict in info_dicts:
-            for key, value in info_dict.items():
-                if "depotFile" in key.decode():
-                    depot_paths.append(value.decode())
+            depot_file = self.__get_dict_value(info_dict, "depotFile")
+            if depot_file:
+                depot_paths.append(depot_file)
 
         return depot_paths
 
@@ -1095,7 +1059,7 @@ class P4Client(object):
         :param case_sensitive: *bool*
         :return: *int* changelist number
         """
-        if type(changelist_description) != str:
+        if not isinstance(changelist_description, str):
             return "default"
 
         if changelist_description == "default":
@@ -1178,10 +1142,7 @@ class P4Client(object):
         for path in paths:
             info_dicts.extend(self.run_cmd("changes", args=["-l", path]))
 
-        # decode from bytes
-        if sys.version_info.major > 2:
-            info_dicts = decode_dictionaries(info_dicts)
-
+        info_dicts = decode_dictionaries(info_dicts)
         return info_dicts
 
     def host_online(self, timeout=2.0):
@@ -1231,40 +1192,40 @@ class P4Client(object):
         :param changelist: *string* with cl description or *int* cl number
         :return:
         """
-        if type(changelist) == str:
+        if isinstance(changelist, str):
             try:
-                changelist = int(changelist)
-                return changelist
-            except:
+                return int(changelist)
+            except (ValueError, TypeError):
                 pass
             changelist = self.get_or_make_changelist(changelist)
-
-        elif type(changelist == bytes):
+        elif isinstance(changelist, (bytes, float)):
             return int(changelist)
-        elif type(changelist == float):
-            return int(changelist)
-        elif type(changelist) == int:
+        elif isinstance(changelist, int):
             return changelist
 
         return changelist
 
     def __get_dict_value(self, dictionary, key, default_value=None):
         """
-        Python 3 treats the strings in the info dicts as bytes-type strings, Python 2 doesn't. This functions checks the
-        Python version and changes the keys and values accordingly
+        Gets a value from a P4 marshaled output dictionary. P4's marshaled output uses bytes for keys and values,
+        so this handles encoding/decoding transparently.
 
         :param dictionary: *dict* dictionary from where to get the info
         :param key: *string* key you want the value of
         :param default_value: default value to return in case the key doesn't exist
         :return:
         """
-        if sys.version_info.major == 2:
-            return dictionary.get(key, default_value)
-        else:
+        encoded_key = key.encode() if isinstance(key, str) else key
+        value = dictionary.get(encoded_key)
+        if value is None:
+            str_key = key if isinstance(key, str) else key.decode()
+            value = dictionary.get(str_key, default_value)
+        if isinstance(value, bytes):
             try:
-                return dictionary.get(key.encode(), default_value).decode()
-            except:
-                return dictionary.get(key, default_value)
+                return value.decode()
+            except UnicodeDecodeError:
+                return value
+        return value if value is not None else default_value
 
     def fstat_to_p4_files(self, fstat_output_list, allow_invalid_files=False):
         """
@@ -1279,35 +1240,29 @@ class P4Client(object):
         p4_client = self.find_p4_client()
         for file_dict in fstat_output_list:
             p4file = P4File()
-            p4file.set_depot_file_path(self.__get_dict_value(file_dict, "depotFile"))
-            p4file.set_local_file_path(self.__get_dict_value(file_dict, "clientFile"))
-            p4file.set_have_revision(self.__get_dict_value(file_dict, "haveRev"))
-            p4file.set_head_revision(self.__get_dict_value(file_dict, "headRev"))
-            p4file.set_last_submit_time(self.__get_dict_value(file_dict, "headTime"))
-            p4file.set_action(self.__get_dict_value(file_dict, "action"))
-            p4file.set_head_action(self.__get_dict_value(file_dict, "headAction"))
-            p4file.set_raw_data(str(file_dict))
-            p4file.set_file_size(self.__get_dict_value(file_dict, "fileSize"))
+            p4file.depot_file_path = self.__get_dict_value(file_dict, "depotFile")
+            p4file.local_file_path = self.__get_dict_value(file_dict, "clientFile")
+            p4file.have_revision = self.__get_dict_value(file_dict, "haveRev")
+            p4file.head_revision = self.__get_dict_value(file_dict, "headRev")
+            p4file.last_submit_time = self.__get_dict_value(file_dict, "headTime")
+            p4file.action = self.__get_dict_value(file_dict, "action")
+            p4file.head_action = self.__get_dict_value(file_dict, "headAction")
+            p4file.raw_data = str(file_dict)
+            p4file.file_size = self.__get_dict_value(file_dict, "fileSize")
 
             opened_by = []
-            for key, value in file_dict.items():
-                other_open = "otherOpen" if sys.version_info.major == 2 else "otherOpen".encode()
-                if other_open in key and key != other_open:
+            for key in file_dict.keys():
+                if b"otherOpen" in key and key != b"otherOpen":
+                    opened_by.append(self.__get_dict_value(file_dict, key))
+                if b"actionOwner" in key:
                     value = self.__get_dict_value(file_dict, key)
-                    opened_by.append(value)
-                action_owner = "actionOwner" if sys.version_info == 2 else "actionOwner".encode()
-                if action_owner in key:
-                    value = self.__get_dict_value(file_dict, key)
-                    value = value.decode() + "@" + p4_client
-                    opened_by.append(value.encode())
+                    if isinstance(value, bytes):
+                        value = value.decode()
+                    opened_by.append(f"{value}@{p4_client}")
 
-            p4file.set_checked_out_by(opened_by)
-            if allow_invalid_files:
+            p4file.checked_out_by = opened_by
+            if allow_invalid_files or (p4file.is_valid() and not p4file.is_deleted() and not p4file.is_moved_deleted()):
                 p4files.append(p4file)
-            else:
-                if p4file.is_valid():
-                    if not p4file.is_deleted() and not p4file.is_moved_deleted():
-                        p4files.append(p4file)
 
         return p4files
 
@@ -1346,7 +1301,7 @@ class P4Client(object):
         if not self.perforce_root:
             raise p4errors.WorkSpaceError(f"self.perforce_root (value: {self.perforce_root}) is not set!")
 
-        file_list = convert_to_list(file_list) if not isinstance(file_list, list) else file_list
+        file_list = convert_to_list(file_list)
 
         # Easy utility to check that the file is underneath the correct perforce root
         # Quicker than waiting for the result of a p4 fstat
