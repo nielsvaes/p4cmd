@@ -1,4 +1,6 @@
 import logging
+import functools
+
 
 def split_list_into_strings_of_length(input_list, max_length=100):
     """
@@ -9,37 +11,34 @@ def split_list_into_strings_of_length(input_list, max_length=100):
     """
     full_list_str = " ".join([str(arg) for arg in input_list])
 
-    # if str is already below max length, just return it wrapped in a list
-    if not len(full_list_str) > max_length:
+    if len(full_list_str) <= max_length:
         return [full_list_str]
 
-    # Keep appending on the last string until we hit the max length
-    # then add a new entry to the list and keep appending
     clamped_str_list = [""]
     for arg in input_list:
         current_str = clamped_str_list[-1]
-        new_str = "{}{} ".format(current_str, arg)  # the space is deliberately placed, since the first item has no len
+        new_str = f"{current_str}{arg} "
 
-        # if new string is too long, just append the arg as a new item and skip to next arg
         if len(new_str) >= max_length:
-            clamped_str_list.append("{} ".format(arg))  #
+            clamped_str_list.append(f"{arg} ")
             continue
 
-        # set latest to updated string
         clamped_str_list[-1] = new_str
 
     return clamped_str_list
 
 
 def decode_dictionaries(info_dicts):
-    """
-    Decode list of dictionary keys and values into unicode from bytes
-    """
-    decoded_dicts = []
-    for info_dict in info_dicts:
-        decoded_dict = {k.decode(): v.decode() for k, v in info_dict.items()}
-        decoded_dicts.append(decoded_dict)
-    return decoded_dicts
+    """Decode list of dictionary keys and values into unicode from bytes"""
+    result = []
+    for d in info_dicts:
+        decoded = {}
+        for k, v in d.items():
+            dk = k.decode() if isinstance(k, bytes) else k
+            dv = v.decode() if isinstance(v, bytes) else v
+            decoded[dk] = dv
+        result.append(decoded)
+    return result
 
 
 def convert_to_list(value):
@@ -48,18 +47,18 @@ def convert_to_list(value):
     :param value: input value
     :return: list
     """
+    if isinstance(value, list):
+        return value
     if isinstance(value, tuple):
-        converted = [v for v in value]
-    else:
-        converted = [value]
-    return converted
+        return list(value)
+    return [value]
 
 
 def validate_not_empty(func):
     """
     Decorator to ensure file and folder lists are not empty before proceeding with Perforce operations
     """
-
+    @functools.wraps(func)
     def wrapper(*args, **kwargs):
         file_or_folder_list = args[1] if len(args) > 1 else None
 

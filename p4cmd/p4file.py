@@ -1,5 +1,6 @@
 import datetime
 
+
 class Status:
     OPEN_FOR_DELETE = "OPEN_FOR_DELETE"
     NEED_SYNC = "NEED_SYNC"
@@ -8,116 +9,91 @@ class Status:
     OPEN_FOR_EDIT = "OPEN_FOR_EDIT"
     UNTRACKED = "UNTRACKED"
     MOVED = "MOVED"
-    UP_TO_DATE  = "UP_TO_DATE"
+    UP_TO_DATE = "UP_TO_DATE"
     UNKNOWN = "UNKNOWN"
     DELETED = "DELETED"
     MOVED_DELETED = "MOVED_DELETED"
 
 
-class P4File(object):
+class P4File:
     def __init__(self, local_file_path=None, depot_file_path=None):
-        super(P4File, self).__init__()
-        self.__local_file_path = local_file_path
-        self.__depot_file_path = depot_file_path
-
-        self.__last_submitted_by = None
-        self.__have_revision = None
-        self.__head_revision = None
-        self.__checked_out_by = None
-        self.__last_submit_time = None
-        self.__action = None
-        self.__raw_data = None
-        self.__head_action = None
-        self.__file_size = None
+        self._local_file_path = local_file_path
+        self._depot_file_path = depot_file_path
+        self._last_submitted_by = None
+        self._have_revision = None
+        self._head_revision = None
+        self._checked_out_by = None
+        self._last_submit_time = None
+        self._action = None
+        self._raw_data = None
+        self._head_action = None
+        self._file_size = None
+        self._status_override = None
 
     def update_self(self, p4client):
-        if self.__depot_file_path is not None:
-            search_file = self.__depot_file_path
-        else:
-            search_file = self.__local_file_path
-
+        search_file = self._depot_file_path or self._local_file_path
         copy_of_self = p4client.files_to_p4files([search_file])[0]
         self.__dict__.update(copy_of_self.__dict__)
 
     def update_last_submitted_by(self, p4client):
-        info_dict = p4client.run_cmd("changes", [self.__depot_file_path])[0]
-        self.set_last_submitted_by(info_dict.get("user", "UNKNOWN"))
+        info_dict = p4client.run_cmd("changes", [self._depot_file_path])[0]
+        self.last_submitted_by = info_dict.get("user", "UNKNOWN")
+
+    # --- Status predicates ---
 
     def is_valid(self):
-        if self.__local_file_path is not None or self.__depot_file_path is not None:
-            return True
-        return False
+        return self._local_file_path is not None or self._depot_file_path is not None
 
     def is_open_for_add(self):
-        if self.__action == "add":
-            return True
-        return False
+        return self._action == "add"
 
     def is_open_for_edit(self):
-        if self.__action == "edit":
-            return True
-        return False
+        return self._action == "edit"
 
     def is_untracked(self):
-        if "- no such file(s)" in self.__raw_data:
-            return True
-        return False
+        return bool(self._raw_data and "- no such file(s)" in self._raw_data)
 
     def is_local_only(self):
         return self.is_untracked()
 
     def is_checked_out(self):
-        if self.__action is not None:
-            return True
-        return False
+        return self._action is not None
 
     def is_depot_only(self):
-        if self.__have_revision is None and self.__head_revision is not None:
-            return True
-        return False
+        return self._have_revision is None and self._head_revision is not None
 
     def is_deleted(self):
-        if self.__head_action == "delete":
-            return True
-        return False
+        return self._head_action == "delete"
 
     def is_marked_for_delete(self):
-        if self.__action == "delete":
-            return True
-        return False
+        return self._action == "delete"
 
     def is_moved_deleted(self):
-        if self.__action == "move/delete" or self.__head_action == "move/delete":
-            return True
-        return False
+        return self._action == "move/delete" or self._head_action == "move/delete"
 
     def is_moved_added(self):
-        if self.__action == "move/add":
-            return True
-        return False
+        return self._action == "move/add"
 
     def is_up_to_date(self):
-        if self.__have_revision == self.__head_revision:
-            return True
-        return False
+        return self._have_revision == self._head_revision
 
     def is_under_client_root(self):
-        if "is not under client's root" in self.__raw_data:
-            return False
-        return True
+        return not (self._raw_data and "is not under client's root" in self._raw_data)
 
     def needs_syncing(self):
-        if not self.is_deleted() and not self.is_moved_deleted():
-            if not self.is_open_for_add() and not self.is_open_for_edit():
-                if self.__head_revision is None:
-                    return False
-                if self.__have_revision is None and self.__head_revision is not None:
-                    return True
-                if self.__have_revision < self.__head_revision:
-                    return True
-                return False
+        if self.is_deleted() or self.is_moved_deleted():
+            return False
+        if self.is_open_for_add() or self.is_open_for_edit():
+            return False
+        if self._head_revision is None:
+            return False
+        if self._have_revision is None:
+            return True
+        return self._have_revision < self._head_revision
 
     def get_status(self):
+        if self._status_override is not None:
+            return self._status_override
         if self.is_marked_for_delete():
             return Status.OPEN_FOR_DELETE
         if self.is_deleted():
@@ -136,107 +112,187 @@ class P4File(object):
             return Status.UNTRACKED
         if self.is_moved_added():
             return Status.MOVED
-        if self.__have_revision == self.__head_revision:
+        if self._have_revision == self._head_revision:
             return Status.UP_TO_DATE
+        return Status.UNKNOWN
 
-    def set_status(self, value):
-        self.__status = value
+    # --- Properties ---
 
-    def get_head_action(self):
-        return self.__head_action
+    @property
+    def local_file_path(self):
+        return self._local_file_path
 
-    def set_head_action(self, value):
-        self.__head_action = value
+    @local_file_path.setter
+    def local_file_path(self, value):
+        self._local_file_path = value
 
-    def get_raw_data(self):
-        return self.__raw_data
+    @property
+    def depot_file_path(self):
+        return self._depot_file_path
 
-    def set_raw_data(self, value):
-        self.__raw_data = value
+    @depot_file_path.setter
+    def depot_file_path(self, value):
+        self._depot_file_path = value
 
-    def get_action(self):
-        return self.__action
+    @property
+    def action(self):
+        return self._action
 
-    def set_action(self, value):
-        self.__action = value
+    @action.setter
+    def action(self, value):
+        self._action = value
 
-    def get_depot_file_path(self):
-        return self.__depot_file_path
+    @property
+    def head_action(self):
+        return self._head_action
 
-    def set_depot_file_path(self, value):
-        self.__depot_file_path = value
+    @head_action.setter
+    def head_action(self, value):
+        self._head_action = value
 
-    def get_local_file_path(self):
-        return self.__local_file_path
+    @property
+    def raw_data(self):
+        return self._raw_data
 
-    def set_local_file_path(self, value):
-        self.__local_file_path = value
+    @raw_data.setter
+    def raw_data(self, value):
+        self._raw_data = value
 
-    def get_last_submit_time(self):
-        return self.__last_submit_time
+    @property
+    def have_revision(self):
+        return self._have_revision
 
-    def set_last_submit_time(self, value):
+    @have_revision.setter
+    def have_revision(self, value):
+        try:
+            self._have_revision = int(value)
+        except (TypeError, ValueError):
+            self._have_revision = None
+
+    @property
+    def head_revision(self):
+        return self._head_revision
+
+    @head_revision.setter
+    def head_revision(self, value):
+        try:
+            self._head_revision = int(value)
+        except (TypeError, ValueError):
+            self._head_revision = None
+
+    @property
+    def last_submit_time(self):
+        return self._last_submit_time
+
+    @last_submit_time.setter
+    def last_submit_time(self, value):
         try:
             value = datetime.datetime.fromtimestamp(float(value)).strftime('%Y-%m-%d %H:%M:%S')
-        except:
+        except (TypeError, ValueError):
             pass
-        self.__last_submit_time = value
+        self._last_submit_time = value
 
-    def get_checked_out_by(self):
-        return self.__checked_out_by
+    @property
+    def checked_out_by(self):
+        return self._checked_out_by
 
-    def set_checked_out_by(self, value):
-        self.__checked_out_by = value
+    @checked_out_by.setter
+    def checked_out_by(self, value):
+        self._checked_out_by = value
 
-    def get_head_revision(self):
-        return self.__head_revision
+    @property
+    def last_submitted_by(self):
+        return self._last_submitted_by
 
-    def set_head_revision(self, value):
+    @last_submitted_by.setter
+    def last_submitted_by(self, value):
+        self._last_submitted_by = value
+
+    @property
+    def file_size(self):
+        return self._file_size
+
+    @file_size.setter
+    def file_size(self, value):
+        self._file_size = value
+
+    def get_file_size(self, in_megabyte=True):
+        """Returns file size in MB (default) or bytes"""
         try:
-            value = int(value)
-        except:
-            value = None
-        self.__head_revision = value
+            size = int(self._file_size)
+            return round(size / 1048576, 2) if in_megabyte else size
+        except (TypeError, ValueError):
+            return None
+
+    # --- Legacy get_*/set_* API (kept for backwards compatibility) ---
+
+    def get_local_file_path(self):
+        return self.local_file_path
+
+    def set_local_file_path(self, value):
+        self.local_file_path = value
+
+    def get_depot_file_path(self):
+        return self.depot_file_path
+
+    def set_depot_file_path(self, value):
+        self.depot_file_path = value
+
+    def get_action(self):
+        return self.action
+
+    def set_action(self, value):
+        self.action = value
+
+    def get_head_action(self):
+        return self.head_action
+
+    def set_head_action(self, value):
+        self.head_action = value
+
+    def get_raw_data(self):
+        return self.raw_data
+
+    def set_raw_data(self, value):
+        self.raw_data = value
 
     def get_have_revision(self):
-        return self.__have_revision
+        return self.have_revision
 
     def set_have_revision(self, value):
-        try:
-            value = int(value)
-        except:
-            value = None
-        self.__have_revision = value
+        self.have_revision = value
+
+    def get_head_revision(self):
+        return self.head_revision
+
+    def set_head_revision(self, value):
+        self.head_revision = value
+
+    def get_last_submit_time(self):
+        return self.last_submit_time
+
+    def set_last_submit_time(self, value):
+        self.last_submit_time = value
+
+    def get_checked_out_by(self):
+        return self.checked_out_by
+
+    def set_checked_out_by(self, value):
+        self.checked_out_by = value
 
     def get_last_submitted_by(self):
-        return self.__last_submitted_by
+        return self.last_submitted_by
 
     def set_last_submitted_by(self, value):
-        self.__last_submitted_by = value
+        self.last_submitted_by = value
 
     def set_file_size(self, value):
-        self.__file_size = value
-    
-    def get_file_size(self, in_megabyte=True):
-        try:
-            if in_megabyte:
-                return round(int(self.__file_size) / 1048576, 2)
-            return int(self.__file_size)
-        except:
-            return None
+        self.file_size = value
+
+    def set_status(self, value):
+        self._status_override = value
 
     def __eq__(self, other):
         if not isinstance(other, P4File):
             return NotImplemented
-
-        private_attributes = [
-            '_P4File__local_file_path', '_P4File__depot_file_path', '_P4File__last_submitted_by',
-            '_P4File__have_revision', '_P4File__head_revision', '_P4File__checked_out_by',
-            '_P4File__last_submit_time', '_P4File__action', '_P4File__raw_data', '_P4File__head_action',
-            '_P4File__file_size'
-        ]
-
-        for attr in private_attributes:
-            if getattr(self, attr) != getattr(other, attr):
-                return False
-        return True
+        return self.__dict__ == other.__dict__

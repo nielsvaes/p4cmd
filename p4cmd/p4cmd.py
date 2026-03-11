@@ -84,7 +84,7 @@ class P4Client(object):
         """
         self.max_parallel_connections = value
 
-    def run_cmd(self, cmd, args=[], file_list=[], use_global_options=True, online_check=True):
+    def run_cmd(self, cmd, args=None, file_list=None, use_global_options=True, online_check=True):
         """
         Reads the output stream of the command and returns it as a marshaled dict.
 
@@ -100,10 +100,13 @@ class P4Client(object):
         if not self.perforce_root:
             raise p4errors.WorkSpaceError(f"self.perforce_root (value: {self.perforce_root}) is not set!")
 
+        if args is None:
+            args = []
+        if file_list is None:
+            file_list = []
+
         if online_check:
             self.host_online()
-
-        os.chdir(self.perforce_root)
 
         file_list = [f'"{f}"' for f in file_list]
 
@@ -124,7 +127,7 @@ class P4Client(object):
                     logging.warning(
                         f"Command length: {format(len(command))} exceeds MAX_CMD_LEN {MAX_CMD_LEN} on command: {MAX_CMD_LEN}")
 
-                with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, shell=True) as pipe:
+                with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, shell=True, cwd=self.perforce_root) as pipe:
                     output = pipe.stdout
                     try:
                         while True:
@@ -180,7 +183,10 @@ class P4Client(object):
                 return None
             if isinstance(raw_output, bytes):
                 raw_output = raw_output.decode("utf-8")
-            raw_output = raw_output.split("=")[1].split(" ")[0].rstrip()
+            parts = raw_output.split("=", 1)
+            if len(parts) < 2:
+                return None
+            raw_output = parts[1].split(" ")[0].rstrip()
 
             if raw_output == "none":
                 return None
@@ -294,19 +300,25 @@ class P4Client(object):
         Makes a new numbered changelist
 
         :param description: *string* description of the changelist
-        :return: *string* changelist number
+        :return: *int* changelist number, or *None* if the server is offline or the output is unexpected
         """
         if not self.host_online():
             logging.warning("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
-            # raise p4errors.ServerOffline("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
-            return
+            return None
 
         output = subprocess.check_output(
             'p4 --field "Description=%s" --field "Files=" change -o | p4 change -i' % description,
             stderr=subprocess.STDOUT,
             shell=True).decode()
-        changelist_number = output.split(" ")[1]
-        return int(changelist_number)
+        parts = output.split(" ")
+        if len(parts) < 2:
+            logging.error(f"Unexpected output from p4 change: {output!r}")
+            return None
+        try:
+            return int(parts[1])
+        except ValueError:
+            logging.error(f"Could not parse changelist number from: {output!r}")
+            return None
 
     def changelist_exists(self, changelist):
         """
@@ -389,7 +401,13 @@ class P4Client(object):
             result = subprocess.check_output(f'p4 change -i', input=updated_output.encode(), shell=True).decode()
 
             return True
-        except Exception as e:
+        except subprocess.CalledProcessError as e:
+            logging.debug(f"p4 command failed: {e}")
+            if not self.silent:
+                logging.error(f"Failed to update changelist description: {e}")
+            return False
+        except OSError as e:
+            logging.debug(f"OS error: {e}")
             if not self.silent:
                 logging.error(f"Failed to update changelist description: {e}")
             return False
@@ -854,7 +872,13 @@ class P4Client(object):
             info_dicts = self.run_cmd("shelve", args=["-d", "-c", str(changelist)])
             return info_dicts
 
-        except Exception as e:
+        except subprocess.CalledProcessError as e:
+            logging.debug(f"p4 command failed: {e}")
+            if not self.silent:
+                logging.error(f"Failed to delete shelved files: {e}")
+            return [{"code": "error", "data": str(e)}]
+        except OSError as e:
+            logging.debug(f"OS error: {e}")
             if not self.silent:
                 logging.error(f"Failed to delete shelved files: {e}")
             return [{"code": "error", "data": str(e)}]
@@ -1016,13 +1040,13 @@ class P4Client(object):
         """
         info_dicts = self.run_cmd("changes", args=["-l", "-s", "pending", "-u", self.user, "-c", self.client])
         changelists = []
+        description_filter = description_filter.rstrip("\n")
 
         for info_dict in info_dicts:
-            description_filter = description_filter.rstrip("\n")
-            try:
-                cl_description = self.__get_dict_value(info_dict, "desc").rstrip("\n")
-            except AttributeError as err:
-                raise p4errors.P4cmdError(err)
+            desc_value = self.__get_dict_value(info_dict, "desc")
+            if desc_value is None:
+                raise p4errors.P4cmdError("desc key missing in changelist response")
+            cl_description = desc_value.rstrip("\n")
 
             if not cl_description:
                 logging.warning(f"The CL description is empty in this return object!\n{pformat(info_dict)}")
@@ -1106,7 +1130,11 @@ class P4Client(object):
             updated_paths.append(path)
 
         info_dicts = self.run_cmd("where", updated_paths)
-        depot_paths = [self.__get_dict_value(info, "depotFile").rstrip("/...") for info in info_dicts]
+        depot_paths = [
+            self.__get_dict_value(info, "depotFile").rstrip("/...")
+            for info in info_dicts
+            if self.__get_dict_value(info, "depotFile") is not None
+        ]
         return depot_paths
 
     @validate_not_empty

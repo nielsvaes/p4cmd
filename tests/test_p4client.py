@@ -494,3 +494,64 @@ def test_changelist_exists_description_not_found(p4client):
         return_value=["default"]
     ):
         assert p4client.changelist_exists("Nonexistent task") is False
+
+
+# ---------------------------------------------------------------------------
+# Robustness fixes
+# ---------------------------------------------------------------------------
+
+def test_run_cmd_no_chdir(p4client):
+    """os.chdir must NOT be called during run_cmd — cwd= is used on Popen instead."""
+    with patch("p4cmd.p4cmd.os.chdir") as mock_chdir, \
+         patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen, \
+         patch.object(p4client, "host_online", return_value=True):
+        # Simulate an empty marshal stream (EOF immediately)
+        import io
+        mock_pipe = MagicMock()
+        mock_pipe.stdout = io.BytesIO(b"")
+        mock_pipe.__enter__ = lambda s: s
+        mock_pipe.__exit__ = MagicMock(return_value=False)
+        mock_popen.return_value = mock_pipe
+
+        p4client.run_cmd("changes", args=[], online_check=False)
+
+        mock_chdir.assert_not_called()
+        # cwd should have been passed to Popen
+        _, kwargs = mock_popen.call_args
+        assert kwargs.get("cwd") == p4client.perforce_root
+
+
+def test_get_p4_setting_malformed_output(p4client):
+    """get_p4_setting returns None instead of crashing on output with no '='."""
+    bad_dict = {"raw_output": b"P4CLIENT (no equals sign here)"}
+    with patch.object(p4client, "run_cmd", return_value=[bad_dict]):
+        result = p4client.get_p4_setting("P4CLIENT")
+    assert result is None
+
+
+def test_make_new_changelist_malformed_output(p4client):
+    """make_new_changelist returns None instead of crashing on unexpected p4 output."""
+    with patch("p4cmd.p4cmd.subprocess.check_output", return_value=b"Unexpected output with no number\n"), \
+         patch.object(p4client, "host_online", return_value=True):
+        result = p4client.make_new_changelist("test description")
+    assert result is None
+
+
+def test_get_pending_changelists_none_desc(p4client):
+    """get_pending_changelists raises P4cmdError when desc key is missing."""
+    from p4cmd import p4errors
+    info_dicts = [{b"change": b"123", b"status": b"pending"}]  # no "desc" key
+    with patch.object(p4client, "run_cmd", return_value=info_dicts):
+        with pytest.raises(p4errors.P4cmdError):
+            p4client.get_pending_changelists()
+
+
+def test_get_depot_paths_missing_depot_file(p4client):
+    """get_depot_paths skips entries where depotFile is missing instead of crashing."""
+    info_dicts = [
+        {b"depotFile": b"//depot/project/file.txt", b"path": b"C:/workspace/file.txt"},
+        {b"path": b"C:/workspace/other.txt"},  # no depotFile key
+    ]
+    with patch.object(p4client, "run_cmd", return_value=info_dicts):
+        result = p4client.get_depot_paths(["C:/workspace/file.txt", "C:/workspace/other.txt"])
+    assert result == ["//depot/project/file.txt"]
