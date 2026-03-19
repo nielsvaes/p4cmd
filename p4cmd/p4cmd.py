@@ -306,10 +306,41 @@ class P4Client(object):
             logging.warning("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
             return None
 
-        output = subprocess.check_output(
-            'p4 --field "Description=%s" --field "Files=" change -o | p4 change -i' % description,
+        formatted_description = "\n".join(f"\t{line}" for line in description.split("\n"))
+
+        template = subprocess.check_output(
+            'p4 --field "Files=" change -o',
             stderr=subprocess.STDOUT,
             shell=True).decode()
+
+        sections = []
+        current_section = []
+        current_field = None
+        for line in template.split("\n"):
+            if line.strip() and ":" in line and not line.startswith("\t"):
+                if current_field:
+                    sections.append((current_field, current_section))
+                current_field = line.split(":", 1)[0].strip()
+                current_section = [line]
+            else:
+                current_section.append(line)
+        if current_field:
+            sections.append((current_field, current_section))
+
+        new_output = []
+        for field, section_lines in sections:
+            if field == "Description":
+                new_output.append(section_lines[0])
+                new_output.append(formatted_description)
+            else:
+                new_output.extend(section_lines)
+
+        output = subprocess.check_output(
+            "p4 change -i",
+            input="\n".join(new_output).encode(),
+            stderr=subprocess.STDOUT,
+            shell=True).decode()
+
         parts = output.split(" ")
         if len(parts) < 2:
             logging.error(f"Unexpected output from p4 change: {output!r}")

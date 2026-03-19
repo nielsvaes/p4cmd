@@ -531,10 +531,26 @@ def test_get_p4_setting_malformed_output(p4client):
 
 def test_make_new_changelist_malformed_output(p4client):
     """make_new_changelist returns None instead of crashing on unexpected p4 output."""
-    with patch("p4cmd.p4cmd.subprocess.check_output", return_value=b"Unexpected output with no number\n"), \
+    template = b"Change: new\n\nDescription:\n\t<enter description here>\n\nFiles:\n"
+    with patch("p4cmd.p4cmd.subprocess.check_output", side_effect=[template, b"Unexpected output\n"]), \
          patch.object(p4client, "host_online", return_value=True):
         result = p4client.make_new_changelist("test description")
     assert result is None
+
+
+def test_make_new_changelist_preserves_newlines(p4client):
+    """make_new_changelist correctly handles descriptions containing newlines."""
+    template = b"Change: new\n\nDescription:\n\t<enter description here>\n\nFiles:\n"
+    with patch("p4cmd.p4cmd.subprocess.check_output", side_effect=[template, b"Change 12345 created.\n"]) as mock_co, \
+         patch.object(p4client, "host_online", return_value=True):
+        result = p4client.make_new_changelist("Line one.\nLine two.")
+
+    assert result == 12345
+    # Verify the description sent to p4 change -i has tab-indented lines
+    submitted = mock_co.call_args_list[1]
+    input_data = submitted[1]["input"].decode()
+    assert "\tLine one." in input_data
+    assert "\tLine two." in input_data
 
 
 def test_get_pending_changelists_none_desc(p4client):
