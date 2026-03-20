@@ -127,3 +127,10 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Local history (VS plugin)
+.history/
+
+# Local dev files
+tester.py
+.claude/settings.local.json
