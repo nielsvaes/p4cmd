@@ -261,11 +261,12 @@ def test_needs_syncing_no_head_revision_returns_false():
     assert f.needs_syncing() is False
 
 
-def test_needs_syncing_no_have_revision_returns_true():
+def test_needs_syncing_depot_only_returns_false():
+    # File exists in depot but was never synced (depot-only) — not "needs syncing"
     f = P4File()
     f._have_revision = None
     f.head_revision = "5"
-    assert f.needs_syncing() is True
+    assert f.needs_syncing() is False
 
 
 def test_needs_syncing_behind_returns_true():
@@ -312,14 +313,10 @@ def test_get_status_need_sync():
 
 
 def test_get_status_depot_only():
-    # Note: in get_status(), needs_syncing() is checked before is_depot_only().
-    # When have_revision is None and head_revision is set, needs_syncing() returns
-    # True, so get_status() returns NEED_SYNC rather than DEPOT_ONLY.
-    # is_depot_only() is still useful as a direct predicate (tested above).
     f = P4File()
     f._have_revision = None
     f.head_revision = "5"
-    assert f.get_status() == Status.NEED_SYNC
+    assert f.get_status() == Status.DEPOT_ONLY
 
 
 def test_get_status_open_for_add():

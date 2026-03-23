@@ -140,21 +140,53 @@ class P4Client(object):
                             "command": command,
                             "code": "error",
                             "error": str(error),
-                            "raw_output": subprocess.check_output(command, stderr=subprocess.STDOUT, shell=True)
+                            "raw_output": subprocess.check_output(command, stderr=subprocess.STDOUT, shell=True, cwd=self.perforce_root)
                         }
                         dict_list.append(output_dict)
                     pipe.kill()
 
         return dict_list
 
+    def __replace_description_in_template(self, template, new_description):
+        """
+        Parses a p4 changelist template into sections, replaces the Description
+        field with new_description (tab-indented), and returns the modified template.
+        """
+        formatted_description = "\n".join(f"\t{line}" for line in new_description.split("\n"))
+
+        sections = []
+        current_section = []
+        current_field = None
+        for line in template.split("\n"):
+            if line.strip() and ":" in line and not line.startswith("\t"):
+                if current_field:
+                    sections.append((current_field, current_section))
+                current_field = line.split(":", 1)[0].strip()
+                current_section = [line]
+            else:
+                current_section.append(line)
+        if current_field:
+            sections.append((current_field, current_section))
+
+        new_output = []
+        for field, section_lines in sections:
+            if field == "Description":
+                new_output.append(section_lines[0])
+                new_output.append(formatted_description)
+            else:
+                new_output.extend(section_lines)
+
+        return "\n".join(new_output)
+
     def get_ticket_expiration(self):
         """
         Get the time in seconds when the current authentication ticket will expire
 
         :return: *int* seconds until authentication ticket expires or *None*
+        :raises p4errors.ServerOffline: if the server is unreachable
         """
         if not self.host_online():
-            return None
+            raise p4errors.ServerOffline("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
         result = self.run_cmd("login", args=["-s"])
         info_dict = result[0]
         expiration_seconds = self.__get_dict_value(info_dict, "TicketExpiration", None)
@@ -300,44 +332,22 @@ class P4Client(object):
         Makes a new numbered changelist
 
         :param description: *string* description of the changelist
-        :return: *int* changelist number, or *None* if the server is offline or the output is unexpected
+        :return: *int* changelist number, or *None* if the output is unexpected
+        :raises p4errors.ServerOffline: if the server is unreachable
         """
         if not self.host_online():
-            logging.warning("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
-            return None
-
-        formatted_description = "\n".join(f"\t{line}" for line in description.split("\n"))
+            raise p4errors.ServerOffline("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
 
         template = subprocess.check_output(
-            'p4 --field "Files=" change -o',
+            f'p4 -u {self.user} -c {self.client} --field "Files=" change -o',
             stderr=subprocess.STDOUT,
             shell=True).decode()
 
-        sections = []
-        current_section = []
-        current_field = None
-        for line in template.split("\n"):
-            if line.strip() and ":" in line and not line.startswith("\t"):
-                if current_field:
-                    sections.append((current_field, current_section))
-                current_field = line.split(":", 1)[0].strip()
-                current_section = [line]
-            else:
-                current_section.append(line)
-        if current_field:
-            sections.append((current_field, current_section))
-
-        new_output = []
-        for field, section_lines in sections:
-            if field == "Description":
-                new_output.append(section_lines[0])
-                new_output.append(formatted_description)
-            else:
-                new_output.extend(section_lines)
+        modified = self.__replace_description_in_template(template, description)
 
         output = subprocess.check_output(
-            "p4 change -i",
-            input="\n".join(new_output).encode(),
+            f"p4 -u {self.user} -c {self.client} change -i",
+            input=modified.encode(),
             stderr=subprocess.STDOUT,
             shell=True).decode()
 
@@ -384,52 +394,15 @@ class P4Client(object):
         try:
             changelist = self.__ensure_changelist(changelist)
 
-            # do some formatting so that we have the proper indentation
-            formatted_description = []
-            for line in new_description.split('\n'):
-                formatted_description.append(f"\t{line}")
-            formatted_description = '\n'.join(formatted_description)
+            template = subprocess.check_output(
+                f'p4 -u {self.user} -c {self.client} change -o {changelist}',
+                shell=True).decode()
 
-            output = subprocess.check_output(f'p4 change -o {changelist}', shell=True).decode()
+            modified = self.__replace_description_in_template(template, new_description)
 
-            # Split the output into sections based on field names
-            sections = []
-            current_section = []
-            current_field = None
-
-            # take the output and start parsing it
-            for line in output.split('\n'):
-                # check if it's a new field
-                if line.strip() and ':' in line and not line.startswith('\t'):
-                    # if it is, save the previous section
-                    if current_field:
-                        sections.append((current_field, current_section))
-                    # now start a new section
-                    current_field = line.split(':', 1)[0].strip()
-                    current_section = [line]
-                else:
-                    # if it's not a new field, add to the current section
-                    current_section.append(line)
-
-            # add the last section
-            if current_field:
-                sections.append((current_field, current_section))
-
-            # new remake the Description field with the update description
-            new_output = []
-            for field, section_lines in sections:
-                if field == "Description":
-                    # replace the description section
-                    new_output.append(section_lines[0])  # keep the "Description:" line because perforce needs this
-                    new_output.append(formatted_description)
-                else:
-                    # keep everything else as-is
-                    new_output.extend(section_lines)
-
-            updated_output = '\n'.join(new_output)
-
-            # TODO: modify run_cmd to allow input so that commands like this can also run through it.
-            result = subprocess.check_output(f'p4 change -i', input=updated_output.encode(), shell=True).decode()
+            result = subprocess.check_output(
+                f'p4 -u {self.user} -c {self.client} change -i',
+                input=modified.encode(), shell=True).decode()
 
             return True
         except subprocess.CalledProcessError as e:
@@ -1071,7 +1044,9 @@ class P4Client(object):
         """
         info_dicts = self.run_cmd("changes", args=["-l", "-s", "pending", "-u", self.user, "-c", self.client])
         changelists = []
-        description_filter = description_filter.rstrip("\n")
+        description_filter = str(description_filter).rstrip("\n")
+        if not case_sensitive:
+            description_filter = description_filter.lower()
 
         for info_dict in info_dicts:
             desc_value = self.__get_dict_value(info_dict, "desc")
@@ -1083,7 +1058,6 @@ class P4Client(object):
                 logging.warning(f"The CL description is empty in this return object!\n{pformat(info_dict)}")
 
             if not case_sensitive:
-                description_filter = description_filter.lower()
                 cl_description = cl_description.lower()
 
             # no filter means just add all the changelists
@@ -1296,11 +1270,17 @@ class P4Client(object):
         :return:
         """
         p4files = []
-        p4_client = self.find_p4_client()
+        p4_client = self.client or self.find_p4_client()
         for file_dict in fstat_output_list:
             p4file = P4File()
             p4file.depot_file_path = self.__get_dict_value(file_dict, "depotFile")
             p4file.local_file_path = self.__get_dict_value(file_dict, "clientFile")
+
+            # For untracked files, fstat returns an error dict with the path in "data"
+            if p4file.local_file_path is None:
+                data = self.__get_dict_value(file_dict, "data") or ""
+                if " - " in data:
+                    p4file.local_file_path = data.split(" - ")[0].strip()
             p4file.have_revision = self.__get_dict_value(file_dict, "haveRev")
             p4file.head_revision = self.__get_dict_value(file_dict, "headRev")
             p4file.last_submit_time = self.__get_dict_value(file_dict, "headTime")

@@ -133,4 +133,5 @@ dmypy.json
 
 # Local dev files
 tester.py
+tests/.env
 .claude/settings.local.json

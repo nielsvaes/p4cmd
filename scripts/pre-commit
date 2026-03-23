@@ -4,4 +4,4 @@ if [ -z "$PYTHON" ]; then
     echo "Python not found, skipping pre-commit tests."
     exit 0
 fi
-$PYTHON -m pytest tests/ -q || { echo "Tests failed, commit aborted."; exit 1; }
+$PYTHON -m pytest tests/ -q --ignore=tests/test_integration.py || { echo "Tests failed, commit aborted."; exit 1; }

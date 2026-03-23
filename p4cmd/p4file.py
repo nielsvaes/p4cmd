@@ -88,7 +88,7 @@ class P4File:
         if self._head_revision is None:
             return False
         if self._have_revision is None:
-            return True
+            return False
         return self._have_revision < self._head_revision
 
     def get_status(self):

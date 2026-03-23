@@ -33,7 +33,7 @@ jobs:
         pip install build pytest
 
     - name: Run tests
-      run: pytest tests/ -v
+      run: pytest tests/ -v --ignore=tests/test_integration.py
 
     - name: Build package
       run: python -m build
