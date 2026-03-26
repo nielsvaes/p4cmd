@@ -17,6 +17,7 @@ setuptools.setup(
     long_description_content_type="text/markdown",
     url="https://github.com/nielsvaes/p4cmd",
     install_requires=[],
+    extras_require={"test": ["pytest>=7.0"]},
     packages=setuptools.find_packages(),
     package_data={
         "": data_files_to_include,
