@@ -19,8 +19,8 @@ jobs:
 
     - name: Verify tag is on main
       run: |
-        git fetch origin master
-        git merge-base --is-ancestor ${{ github.sha }} origin/master || { echo "Tag is not on master branch, aborting."; exit 1; }
+        git fetch origin main
+        git merge-base --is-ancestor ${{ github.sha }} origin/main || { echo "Tag is not on main branch, aborting."; exit 1; }
 
     - name: Set up Python
       uses: actions/setup-python@v5
