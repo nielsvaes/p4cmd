@@ -605,6 +605,8 @@ class P4Client(object):
         if verify:
             local_file_paths = self.get_local_paths(file_list)
             for local_file_path in local_file_paths:
+                if local_file_path is None:
+                    continue
                 if not os.path.isfile(local_file_path):
                     logging.warning(f"File didn't exist after syncing, try force syncing it instead: {local_file_path}")
 
@@ -1160,7 +1162,11 @@ class P4Client(object):
             no_rev_paths.append("{}{}".format(path_without_ext, path_ext))
 
         info_dicts = self.run_cmd("where", file_list=no_rev_paths)
-        local_paths = [self.__get_dict_value(info, "path") for info in info_dicts]
+        local_paths = [
+            self.__get_dict_value(info, "path")
+            for info in info_dicts
+            if self.__get_dict_value(info, "path") is not None
+        ]
         return local_paths
 
     @validate_not_empty

@@ -571,3 +571,16 @@ def test_get_depot_paths_missing_depot_file(p4client):
     with patch.object(p4client, "run_cmd", return_value=info_dicts):
         result = p4client.get_depot_paths(["C:/workspace/file.txt", "C:/workspace/other.txt"])
     assert result == ["//depot/project/file.txt"]
+
+
+def test_get_local_paths_missing_path(p4client):
+    """get_local_paths skips entries where path is missing (e.g. unmapped paths from p4 where)."""
+    info_dicts = [
+        {b"depotFile": b"//depot/project/file.txt", b"path": b"C:/workspace/file.txt"},
+        {b"depotFile": b"//depot/project/unmapped.txt"},  # no path key — unmapped
+    ]
+    with patch.object(p4client, "run_cmd", return_value=info_dicts):
+        result = p4client.get_local_paths(
+            ["//depot/project/file.txt", "//depot/project/unmapped.txt"]
+        )
+    assert result == ["C:/workspace/file.txt"]
