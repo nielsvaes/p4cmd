@@ -15,6 +15,20 @@ class WorkSpaceError(P4cmdError):
     pass
 
 
+class P4CommandError(P4cmdError):
+    """Raised when a P4 command returns one or more error dicts.
+
+    Attributes:
+        cmd: The P4 command that failed (e.g. "sync", "edit").
+        messages: List of error message strings from the error dicts.
+    """
+    def __init__(self, cmd, messages):
+        self.cmd = cmd
+        self.messages = messages
+        joined = "; ".join(str(m).strip() for m in messages)
+        super().__init__(f"p4 {cmd}: {joined}")
+
+
 class ServerOffline(P4cmdError):
     """Raised when the Perforce server is unreachable.
 

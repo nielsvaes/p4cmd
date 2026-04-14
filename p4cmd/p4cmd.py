@@ -84,7 +84,7 @@ class P4Client(object):
         """
         self.max_parallel_connections = value
 
-    def run_cmd(self, cmd, args=None, file_list=None, use_global_options=True, online_check=True):
+    def run_cmd(self, cmd, args=None, file_list=None, use_global_options=True, online_check=True, raise_on_errors=False):
         """
         Reads the output stream of the command and returns it as a marshaled dict.
 
@@ -144,6 +144,20 @@ class P4Client(object):
                         }
                         dict_list.append(output_dict)
                     pipe.kill()
+
+        # Check for error dicts in the results
+        errors = [d for d in dict_list if d.get(b"code") == b"error" or d.get("code") == "error"]
+        if errors:
+            messages = []
+            for e in errors:
+                msg = e.get(b"data") or e.get("data") or e.get(b"error") or e.get("error") or "unknown error"
+                if isinstance(msg, bytes):
+                    msg = msg.decode("utf-8", errors="replace")
+                messages.append(msg.strip())
+            for msg in messages:
+                logging.warning(f"p4 {cmd}: {msg}")
+            if raise_on_errors:
+                raise p4errors.P4CommandError(cmd, messages)
 
         return dict_list
 

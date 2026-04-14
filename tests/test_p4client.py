@@ -1,10 +1,12 @@
 """Tests for p4cmd/p4cmd.py — P4Client with run_cmd mocked."""
+import logging
 import socket
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from p4cmd.p4cmd import P4Client
+from p4cmd.p4errors import P4CommandError
 from p4cmd.p4file import P4File, Status
 from tests.conftest import make_fstat_dict
 
@@ -575,6 +577,80 @@ def test_get_depot_paths_missing_depot_file(p4client):
     with patch.object(p4client, "run_cmd", return_value=info_dicts):
         result = p4client.get_depot_paths(["C:/workspace/file.txt", "C:/workspace/other.txt"])
     assert result == ["//depot/project/file.txt"]
+
+
+# ---------------------------------------------------------------------------
+# run_cmd error handling
+# ---------------------------------------------------------------------------
+
+def test_run_cmd_logs_warning_on_error_dicts(p4client, caplog):
+    """run_cmd logs a warning for each error dict returned by p4."""
+    error_dict = {b"code": b"error", b"data": b"//depot/file.txt - file(s) not on client.\n"}
+    ok_dict = {b"code": b"stat", b"depotFile": b"//depot/other.txt"}
+    with patch("subprocess.Popen") as mock_popen:
+        import marshal as _m, io as _io
+        buf = _io.BytesIO()
+        _m.dump(error_dict, buf)
+        _m.dump(ok_dict, buf)
+        buf.seek(0)
+        mock_popen.return_value.__enter__ = lambda s: s
+        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
+        mock_popen.return_value.stdout = buf
+        mock_popen.return_value.kill = MagicMock()
+        with caplog.at_level(logging.WARNING):
+            result = p4client.run_cmd("sync", file_list=["//depot/file.txt", "//depot/other.txt"])
+    assert len(result) == 2  # both dicts still returned
+    assert "file(s) not on client" in caplog.text
+
+
+def test_run_cmd_raise_on_errors(p4client):
+    """run_cmd raises P4CommandError when raise_on_errors=True and errors are present."""
+    error_dict = {b"code": b"error", b"data": b"//depot/file.txt - file(s) not on client.\n"}
+    with patch("subprocess.Popen") as mock_popen:
+        import marshal as _m, io as _io
+        buf = _io.BytesIO()
+        _m.dump(error_dict, buf)
+        buf.seek(0)
+        mock_popen.return_value.__enter__ = lambda s: s
+        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
+        mock_popen.return_value.stdout = buf
+        mock_popen.return_value.kill = MagicMock()
+        with pytest.raises(P4CommandError, match="file\\(s\\) not on client"):
+            p4client.run_cmd("sync", file_list=["//depot/file.txt"], raise_on_errors=True)
+
+
+def test_run_cmd_no_raise_without_errors(p4client):
+    """run_cmd doesn't raise when raise_on_errors=True but no errors are present."""
+    ok_dict = {b"code": b"stat", b"depotFile": b"//depot/file.txt"}
+    with patch("subprocess.Popen") as mock_popen:
+        import marshal as _m, io as _io
+        buf = _io.BytesIO()
+        _m.dump(ok_dict, buf)
+        buf.seek(0)
+        mock_popen.return_value.__enter__ = lambda s: s
+        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
+        mock_popen.return_value.stdout = buf
+        mock_popen.return_value.kill = MagicMock()
+        result = p4client.run_cmd("sync", file_list=["//depot/file.txt"], raise_on_errors=True)
+    assert result == [ok_dict]
+
+
+def test_run_cmd_handles_string_key_error_dicts(p4client, caplog):
+    """run_cmd handles error dicts with string keys (from ValueError fallback)."""
+    # String-keyed error dicts come from the ValueError handler in run_cmd
+    error_dict = {b"code": b"error", b"data": b"some error\n"}
+    with patch("subprocess.Popen") as mock_popen:
+        import marshal as _m, io as _io
+        buf = _io.BytesIO()
+        _m.dump(error_dict, buf)
+        buf.seek(0)
+        mock_popen.return_value.__enter__ = lambda s: s
+        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
+        mock_popen.return_value.stdout = buf
+        mock_popen.return_value.kill = MagicMock()
+        with caplog.at_level(logging.WARNING):
+            p4client.run_cmd("sync", file_list=["//depot/file.txt"])
+    assert "some error" in caplog.text
 
 
 def test_get_local_paths_missing_path(p4client):
