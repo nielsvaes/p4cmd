@@ -1231,6 +1231,8 @@ class P4Client(object):
         :param changelist: *string* with cl description or *int* cl number
         :return:
         """
+        if changelist is None:
+            return "default"
         if isinstance(changelist, str):
             try:
                 return int(changelist)

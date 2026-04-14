@@ -109,6 +109,10 @@ def test_ensure_changelist_float(p4client):
     assert p4client._P4Client__ensure_changelist(1.5) == 1
 
 
+def test_ensure_changelist_none(p4client):
+    assert p4client._P4Client__ensure_changelist(None) == "default"
+
+
 def test_ensure_changelist_default_str(p4client):
     # "default" triggers get_or_make_changelist which returns "default"
     with patch.object(p4client, "get_or_make_changelist", return_value="default") as mock_gomc:
