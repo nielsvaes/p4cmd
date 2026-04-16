@@ -1302,7 +1302,7 @@ class P4Client(object):
             if p4file.local_file_path is None:
                 data = self.__get_dict_value(file_dict, "data") or ""
                 if " - " in data:
-                    p4file.local_file_path = data.split(" - ")[0].strip()
+                    p4file.local_file_path = data.rsplit(" - ", 1)[0].strip()
             p4file.have_revision = self.__get_dict_value(file_dict, "haveRev")
             p4file.head_revision = self.__get_dict_value(file_dict, "headRev")
             p4file.last_submit_time = self.__get_dict_value(file_dict, "headTime")

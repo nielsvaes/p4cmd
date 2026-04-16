@@ -212,6 +212,20 @@ def test_fstat_actionowner_field(p4client):
     assert any("charlie@testclient" in entry for entry in files[0].checked_out_by)
 
 
+def test_fstat_untracked_file_with_dash_in_name(p4client):
+    """fstat_to_p4_files correctly parses untracked file paths containing ' - '."""
+    fstat = [
+        {
+            b"code": b"error",
+            b"data": b"D:/p4/games/Animations/my_clip - Copy.pose - no such file(s).",
+        }
+    ]
+    with patch.object(p4client, "find_p4_client", return_value="testclient"):
+        files = p4client.fstat_to_p4_files(fstat)
+    assert len(files) == 1
+    assert files[0].local_file_path == "D:/p4/games/Animations/my_clip - Copy.pose"
+
+
 def test_fstat_invalid_revision_becomes_none(p4client):
     fstat = [
         make_fstat_dict(
