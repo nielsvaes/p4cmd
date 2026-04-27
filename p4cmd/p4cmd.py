@@ -138,7 +138,7 @@ class P4Client(object):
                     except ValueError as error:
                         output_dict = {
                             "command": command,
-                            "code": "error",
+                            "code": "raw",
                             "error": str(error),
                             "raw_output": subprocess.check_output(command, stderr=subprocess.STDOUT, shell=True, cwd=self.perforce_root)
                         }

@@ -667,6 +667,24 @@ def test_run_cmd_handles_string_key_error_dicts(p4client, caplog):
     assert "some error" in caplog.text
 
 
+def test_run_cmd_value_error_fallback_no_warning(p4client, caplog):
+    """run_cmd's ValueError fallback (e.g. `p4 set`) must not log spurious error warnings."""
+    with patch("subprocess.Popen") as mock_popen, \
+         patch("p4cmd.p4cmd.subprocess.check_output", return_value=b"P4USER=niels.vaes (set)\n"):
+        # Empty stdout triggers ValueError on marshal.load (unknown type code in this case
+        # would also work; here we use bytes that aren't valid marshal data).
+        import io as _io
+        buf = _io.BytesIO(b"\xff\xff\xff\xff")  # invalid marshal type code -> ValueError
+        mock_popen.return_value.__enter__ = lambda s: s
+        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
+        mock_popen.return_value.stdout = buf
+        mock_popen.return_value.kill = MagicMock()
+        with caplog.at_level(logging.WARNING):
+            result = p4client.get_p4_setting("P4USER")
+    assert result == "niels.vaes"
+    assert caplog.records == []
+
+
 def test_get_local_paths_missing_path(p4client):
     """get_local_paths skips entries where path is missing (e.g. unmapped paths from p4 where)."""
     info_dicts = [
