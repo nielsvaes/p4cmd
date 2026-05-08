@@ -2,6 +2,7 @@ import os
 import marshal
 import subprocess
 import socket
+import warnings
 from pprint import pformat
 
 import logging
@@ -84,18 +85,35 @@ class P4Client(object):
         """
         self.max_parallel_connections = value
 
-    def run_cmd(self, cmd, args=None, file_list=None, use_global_options=True, online_check=True, raise_on_errors=False):
+    def run_cmd(self, cmd, args=None, file_list=None, marshal_output=True, online_check=True, raise_on_errors=False, **kwargs):
         """
-        Reads the output stream of the command and returns it as a marshaled dict.
+        Reads the output stream of the command and returns it as a list of dicts.
 
         :param cmd: *string* p4 command like "change", "reopen", "move"
         :param args: *list* of string arguments like ["-c", "27277"]
         :param file_list: *list* of string arguments like ["//depot/folder/file.atom", "D:/Games/Whatever.fbx]
-        :param use_global_options: *bool*
+        :param marshal_output: *bool* when True (default), passes ``-G`` so p4 emits Python marshal-format
+            output that we parse into dicts, and also passes ``-u <user> -c <client>`` for identity. Set to
+            False for commands that don't honor ``-G`` (notably ``p4 set``, which only reads local settings)
+            or when user/client haven't been resolved yet — output is then returned verbatim under the
+            ``raw_output`` key.
         :param online_check: *bool* if set to True, will first check if the remote server is reachable before executing the command.
         :return: *list* of dictionaries with either the marshaled returns of the command or dictionaries with the
         raw output of the command
         """
+        # Backwards compat: the old name `use_global_options` was misleading — it sounded like a master
+        # switch for p4's global-option family, when it really just toggles `-G` (marshal output) plus the
+        # bundled `-u`/`-c` identity flags. Renamed to `marshal_output` to point at the actual consequence
+        # (the parsing path); old kwarg kept as a deprecated alias.
+        if "use_global_options" in kwargs:
+            warnings.warn(
+                "`use_global_options` is deprecated; use `marshal_output` instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            marshal_output = kwargs.pop("use_global_options")
+        if kwargs:
+            raise TypeError(f"run_cmd() got unexpected keyword arguments: {list(kwargs)}")
 
         if not self.perforce_root:
             raise p4errors.WorkSpaceError(f"self.perforce_root (value: {self.perforce_root}) is not set!")
@@ -117,7 +135,7 @@ class P4Client(object):
         dict_list = []
         for clamped_arg in clamped_arg_list:
             for clamped_files in clamped_file_list:
-                if use_global_options:
+                if marshal_output:
                     command = f"p4 -G -u {self.user} -c {self.client} {cmd} {clamped_arg} {clamped_files}"
                 else:
                     command = f"p4 {cmd} {clamped_arg} {clamped_files}"
@@ -129,20 +147,31 @@ class P4Client(object):
 
                 with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, shell=True, cwd=self.perforce_root) as pipe:
                     output = pipe.stdout
-                    try:
-                        while True:
-                            value_dict = marshal.load(output)
-                            dict_list.append(value_dict)
-                    except EOFError:
-                        pass
-                    except ValueError as error:
-                        output_dict = {
+                    if not marshal_output:
+                        # Without -G, p4 emits plain text (and `p4 set` ignores -G even when passed),
+                        # so marshal.load is guaranteed to fail. Read stdout directly from this Popen
+                        # — it has stdin=PIPE, so it's safe in non-interactive sessions where the old
+                        # check_output fallback hit OSError(WinError 50) on DuplicateHandle.
+                        dict_list.append({
                             "command": command,
                             "code": "raw",
-                            "error": str(error),
-                            "raw_output": subprocess.check_output(command, stderr=subprocess.STDOUT, shell=True, cwd=self.perforce_root)
-                        }
-                        dict_list.append(output_dict)
+                            "raw_output": output.read(),
+                        })
+                    else:
+                        try:
+                            while True:
+                                value_dict = marshal.load(output)
+                                dict_list.append(value_dict)
+                        except EOFError:
+                            pass
+                        except ValueError as error:
+                            output_dict = {
+                                "command": command,
+                                "code": "raw",
+                                "error": str(error),
+                                "raw_output": subprocess.check_output(command, stderr=subprocess.STDOUT, shell=True, cwd=self.perforce_root)
+                            }
+                            dict_list.append(output_dict)
                     pipe.kill()
 
         # Check for error dicts in the results
@@ -218,7 +247,7 @@ class P4Client(object):
         """
         try:
             # skipping the online check for setting commands
-            info_dict = self.run_cmd("set", [setting], use_global_options=False, online_check=False)[0]
+            info_dict = self.run_cmd("set", [setting], marshal_output=False, online_check=False)[0]
         except Exception as e:
             raise p4errors.WorkSpaceError("Unable to find setting %s" % setting) from e
 

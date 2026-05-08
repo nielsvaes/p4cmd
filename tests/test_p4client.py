@@ -668,13 +668,10 @@ def test_run_cmd_handles_string_key_error_dicts(p4client, caplog):
 
 
 def test_run_cmd_value_error_fallback_no_warning(p4client, caplog):
-    """run_cmd's ValueError fallback (e.g. `p4 set`) must not log spurious error warnings."""
-    with patch("subprocess.Popen") as mock_popen, \
-         patch("p4cmd.p4cmd.subprocess.check_output", return_value=b"P4USER=niels.vaes (set)\n"):
-        # Empty stdout triggers ValueError on marshal.load (unknown type code in this case
-        # would also work; here we use bytes that aren't valid marshal data).
+    """The marshal_output=False path (e.g. `p4 set`) must not log spurious error warnings."""
+    with patch("subprocess.Popen") as mock_popen:
         import io as _io
-        buf = _io.BytesIO(b"\xff\xff\xff\xff")  # invalid marshal type code -> ValueError
+        buf = _io.BytesIO(b"P4USER=niels.vaes (set)\n")
         mock_popen.return_value.__enter__ = lambda s: s
         mock_popen.return_value.__exit__ = MagicMock(return_value=False)
         mock_popen.return_value.stdout = buf
@@ -683,6 +680,55 @@ def test_run_cmd_value_error_fallback_no_warning(p4client, caplog):
             result = p4client.get_p4_setting("P4USER")
     assert result == "niels.vaes"
     assert caplog.records == []
+
+
+def test_run_cmd_no_global_options_does_not_spawn_second_subprocess(p4client):
+    """
+    Regression test for issue #13. When marshal_output=False (e.g. `p4 set`),
+    p4 outputs plain text — marshal.load is guaranteed to fail. The old fallback
+    spawned a second subprocess via check_output without pinning stdin, which
+    triggered OSError(WinError 50) on DuplicateHandle in non-interactive sessions
+    (UE commandlets, scheduled tasks, CI). The fix reads stdout directly from the
+    already-open Popen, which has stdin=PIPE.
+    """
+    import io as _io
+    p4_set_output = b"P4USER=niels.vaes (set)\r\n"
+    with patch("subprocess.Popen") as mock_popen, \
+         patch("p4cmd.p4cmd.subprocess.check_output") as mock_check_output:
+        mock_popen.return_value.__enter__ = lambda s: s
+        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
+        mock_popen.return_value.stdout = _io.BytesIO(p4_set_output)
+        mock_popen.return_value.kill = MagicMock()
+
+        result = p4client.get_p4_setting("P4USER")
+
+    assert result == "niels.vaes"
+    mock_check_output.assert_not_called()
+
+
+def test_run_cmd_use_global_options_deprecation_alias(p4client):
+    """The old `use_global_options` kwarg is accepted but emits DeprecationWarning."""
+    import io as _io
+    import warnings as _warnings
+    with patch("subprocess.Popen") as mock_popen:
+        mock_popen.return_value.__enter__ = lambda s: s
+        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
+        mock_popen.return_value.stdout = _io.BytesIO(b"P4USER=niels.vaes (set)\n")
+        mock_popen.return_value.kill = MagicMock()
+
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            result = p4client.run_cmd("set", ["P4USER"], use_global_options=False, online_check=False)
+
+    assert result[0]["raw_output"] == b"P4USER=niels.vaes (set)\n"
+    assert any(issubclass(w.category, DeprecationWarning) and "use_global_options" in str(w.message)
+               for w in caught), f"expected DeprecationWarning for use_global_options, got: {[str(w.message) for w in caught]}"
+
+
+def test_run_cmd_unknown_kwarg_raises(p4client):
+    """Unknown kwargs should raise TypeError, not be silently accepted."""
+    with pytest.raises(TypeError, match="unexpected keyword arguments"):
+        p4client.run_cmd("set", ["P4USER"], totally_made_up=True, online_check=False)
 
 
 def test_get_local_paths_missing_path(p4client):
