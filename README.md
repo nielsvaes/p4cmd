@@ -1,5 +1,8 @@
 ### P4CMD 🌴
 
+[![Tests](https://github.com/nielsvaes/p4cmd/actions/workflows/tests.yml/badge.svg)](https://github.com/nielsvaes/p4cmd/actions/workflows/tests.yml)
+[![Publish](https://github.com/nielsvaes/p4cmd/actions/workflows/python-publish.yml/badge.svg)](https://github.com/nielsvaes/p4cmd/actions/workflows/python-publish.yml)
+
 A Python Perforce package that doesn't bring in any other packages to work.
 Relies on the `p4` CLI installed on the system.
 
