@@ -38,11 +38,27 @@ If the path you pass doesn't contain a `.p4config` file, P4Client will walk up t
 
 ### Quieting log output
 
-`p4cmd` logs warnings and errors through the standard `logging` module under the `p4cmd` logger. To silence them:
+`p4cmd` logs warnings and errors through the standard `logging` module under the `p4cmd` logger. Setting the level on the `p4cmd` parent flows down to all submodules (`p4cmd.p4cmd`, `p4cmd.utils`).
+
+**Drop everything except criticals** — matches the old `silent=True` behavior:
 
 ```python
 import logging
 logging.getLogger("p4cmd").setLevel(logging.CRITICAL)
+```
+
+**Drop literally everything from p4cmd** (including criticals):
+
+```python
+logging.getLogger("p4cmd").disabled = True
+```
+
+**Keep the messages but route them somewhere other than stderr** — e.g. a log file:
+
+```python
+p4_logger = logging.getLogger("p4cmd")
+p4_logger.propagate = False               # don't bubble to root/stderr
+p4_logger.addHandler(logging.FileHandler("p4cmd.log"))
 ```
 
 The old `silent=True` constructor kwarg is deprecated and now a no-op — configure the logger instead.
