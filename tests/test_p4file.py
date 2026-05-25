@@ -283,6 +283,26 @@ def test_needs_syncing_up_to_date_returns_false():
     assert f.needs_syncing() is False
 
 
+def test_needs_syncing_deleted_at_head_with_old_have_returns_true():
+    # File deleted at head but user still has an older revision on disk —
+    # syncing will remove it. Previously the is_deleted() early-return
+    # masked this case, leaving orphaned files in the workspace.
+    f = P4File()
+    f.have_revision = "5"
+    f.head_revision = "6"
+    f.head_action = "delete"
+    assert f.needs_syncing() is True
+
+
+def test_needs_syncing_moved_deleted_with_old_have_returns_true():
+    # Same case for move/delete at head.
+    f = P4File()
+    f.have_revision = "5"
+    f.head_revision = "6"
+    f.head_action = "move/delete"
+    assert f.needs_syncing() is True
+
+
 # ---------------------------------------------------------------------------
 # get_status
 # ---------------------------------------------------------------------------

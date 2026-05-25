@@ -81,8 +81,6 @@ class P4File:
         return not (self._raw_data and "is not under client's root" in self._raw_data)
 
     def needs_syncing(self):
-        if self.is_deleted() or self.is_moved_deleted():
-            return False
         if self.is_open_for_add() or self.is_open_for_edit():
             return False
         if self._head_revision is None:
