@@ -742,3 +742,52 @@ def test_get_local_paths_missing_path(p4client):
             ["//depot/project/file.txt", "//depot/project/unmapped.txt"]
         )
     assert result == ["C:/workspace/file.txt"]
+
+
+# ---------------------------------------------------------------------------
+# Regression: issue #14 — files mapped from outside perforce_root/depot_root
+# must not raise on edit (previously failed when silent=False due to a buggy
+# prefix-based pre-validation that ignored multi-mapping client views).
+# ---------------------------------------------------------------------------
+
+def test_edit_files_accepts_paths_outside_perforce_root_prefix(p4client):
+    """A file mapped from a different depot path (e.g. shared Raw assets) must
+    not be rejected before p4 sees it. perforce_root is /fake/project and
+    depot_root is //depot/project — neither prefix matches this file."""
+    outside_file = "//depot/shared_audio/Raw/voice_line.wav"
+    with patch.object(p4client, "_P4Client__ensure_changelist", return_value="default"):
+        with patch.object(p4client, "run_cmd", return_value=[]) as mock_cmd:
+            p4client.edit_files([outside_file])
+    mock_cmd.assert_called_once()
+    args, kwargs = mock_cmd.call_args
+    assert outside_file in kwargs["file_list"]
+
+
+# ---------------------------------------------------------------------------
+# silent kwarg — deprecated
+# ---------------------------------------------------------------------------
+
+def test_silent_kwarg_emits_deprecation_warning(tmp_path):
+    """Passing silent= (True or False) emits DeprecationWarning."""
+    import warnings as _warnings
+    (tmp_path / ".p4config").write_text("P4PORT=ssl:example:1666\n")
+    with patch.object(P4Client, "host_online", return_value=True):
+        with patch.object(P4Client, "run_cmd", return_value=[{b"depotFile": b"//depot/x/...", b"path": b"/fake/...", b"unmap": b""}]):
+            with _warnings.catch_warnings(record=True) as caught:
+                _warnings.simplefilter("always")
+                P4Client(str(tmp_path), user="u", client="c", server="s", silent=True)
+    assert any(issubclass(w.category, DeprecationWarning) and "silent" in str(w.message)
+               for w in caught), f"expected DeprecationWarning, got: {[str(w.message) for w in caught]}"
+
+
+def test_silent_kwarg_default_no_warning(tmp_path):
+    """Not passing silent at all must not emit a DeprecationWarning."""
+    import warnings as _warnings
+    (tmp_path / ".p4config").write_text("P4PORT=ssl:example:1666\n")
+    with patch.object(P4Client, "host_online", return_value=True):
+        with patch.object(P4Client, "run_cmd", return_value=[{b"depotFile": b"//depot/x/...", b"path": b"/fake/...", b"unmap": b""}]):
+            with _warnings.catch_warnings(record=True) as caught:
+                _warnings.simplefilter("always")
+                P4Client(str(tmp_path), user="u", client="c", server="s")
+    assert not any(issubclass(w.category, DeprecationWarning) and "silent" in str(w.message)
+                   for w in caught), f"unexpected silent warning: {[str(w.message) for w in caught]}"

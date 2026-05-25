@@ -36,6 +36,17 @@ p4 = p4cmd.P4Client.from_env()
 
 If the path you pass doesn't contain a `.p4config` file, P4Client will walk up the directory tree until it finds one and use that as `perforce_root`.
 
+### Quieting log output
+
+`p4cmd` logs warnings and errors through the standard `logging` module under the `p4cmd` logger. To silence them:
+
+```python
+import logging
+logging.getLogger("p4cmd").setLevel(logging.CRITICAL)
+```
+
+The old `silent=True` constructor kwarg is deprecated and now a no-op — configure the logger instead.
+
 ## P4Client API
 
 ### Connection & settings

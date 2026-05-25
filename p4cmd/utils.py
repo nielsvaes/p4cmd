@@ -1,6 +1,8 @@
 import logging
 import functools
 
+_log = logging.getLogger(__name__)
+
 
 def split_list_into_strings_of_length(input_list, max_length=100):
     """
@@ -66,9 +68,9 @@ def validate_not_empty(func):
             file_or_folder_list = convert_to_list(file_or_folder_list)
 
         if not file_or_folder_list:
-            logging.warning(f"Empty file list provided to {func.__name__}, operation skipped.")
-            logging.warning(f"args: {args}")
-            logging.warning(f"kwargs: {kwargs}")
+            _log.warning(f"Empty file list provided to {func.__name__}, operation skipped.")
+            _log.warning(f"args: {args}")
+            _log.warning(f"kwargs: {kwargs}")
             return []
 
         return func(*args, **kwargs)
