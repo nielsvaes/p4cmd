@@ -791,3 +791,39 @@ def test_silent_kwarg_default_no_warning(tmp_path):
                 P4Client(str(tmp_path), user="u", client="c", server="s")
     assert not any(issubclass(w.category, DeprecationWarning) and "silent" in str(w.message)
                    for w in caught), f"unexpected silent warning: {[str(w.message) for w in caught]}"
+
+
+# ---------------------------------------------------------------------------
+# sync_files verify — must not warn on files p4 itself deleted
+# ---------------------------------------------------------------------------
+
+def test_sync_files_no_warning_when_p4_deleted_file(p4client, caplog):
+    """If p4 sync reports action=deleted for a file, the post-sync verify
+    must not warn that the file is missing — its absence is expected."""
+    deleted_path = "C:/workspace/path/to/file.txt"
+    sync_result = [
+        {b"action": b"deleted", b"clientFile": deleted_path.encode(), b"code": b"stat"}
+    ]
+    with patch.object(p4client, "run_cmd", return_value=sync_result):
+        with patch.object(p4client, "get_local_paths", return_value=[deleted_path]):
+            with patch("p4cmd.p4cmd.os.path.isfile", return_value=False):
+                with caplog.at_level("WARNING", logger="p4cmd.p4cmd"):
+                    p4client.sync_files([deleted_path])
+    assert "didn't exist after syncing" not in caplog.text, (
+        f"unexpected verify warning: {caplog.text}"
+    )
+
+
+def test_sync_files_warns_when_file_missing_unexpectedly(p4client, caplog):
+    """Regression guard: when p4 did NOT delete the file but it's still missing
+    on disk, the existing 'try force syncing' warning must still fire."""
+    path = "C:/workspace/path/to/file.txt"
+    sync_result = [
+        {b"action": b"updated", b"clientFile": path.encode(), b"code": b"stat"}
+    ]
+    with patch.object(p4client, "run_cmd", return_value=sync_result):
+        with patch.object(p4client, "get_local_paths", return_value=[path]):
+            with patch("p4cmd.p4cmd.os.path.isfile", return_value=False):
+                with caplog.at_level("WARNING", logger="p4cmd.p4cmd"):
+                    p4client.sync_files([path])
+    assert "didn't exist after syncing" in caplog.text

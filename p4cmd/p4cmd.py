@@ -635,9 +635,24 @@ class P4Client(object):
         info_dicts = self.run_cmd("sync", args=initial_arg_list, file_list=file_list)
 
         if verify:
+            # Files p4 itself deleted on this sync are EXPECTED to be absent from
+            # disk — don't warn for them. Normalize paths so platform-specific
+            # quirks (slash direction, case on Windows) don't cause false misses.
+            def _norm(p):
+                return os.path.normcase(os.path.normpath(p))
+
+            deleted_locals = {
+                _norm(self.__get_dict_value(d, "clientFile"))
+                for d in info_dicts
+                if self.__get_dict_value(d, "action") == "deleted"
+                and self.__get_dict_value(d, "clientFile") is not None
+            }
+
             local_file_paths = self.get_local_paths(file_list)
             for local_file_path in local_file_paths:
                 if local_file_path is None:
+                    continue
+                if _norm(local_file_path) in deleted_locals:
                     continue
                 if not os.path.isfile(local_file_path):
                     _log.warning(f"File didn't exist after syncing, try force syncing it instead: {local_file_path}")
