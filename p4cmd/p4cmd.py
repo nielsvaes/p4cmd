@@ -61,7 +61,20 @@ class P4Client(object):
             if self.server is None:
                 raise p4errors.WorkSpaceError("Could not find P4PORT")
 
-        self.depot_root = self.get_depot_paths([self.perforce_root])[0]
+        # `p4 where` comes back empty when the client cannot talk to the
+        # server -- most commonly an expired ticket. Indexing [0] blindly
+        # turned that into a bare `IndexError: list index out of range`,
+        # which tells the caller nothing. Callers that reconstruct a
+        # P4Client to recover a dropped connection need to be able to tell
+        # "log in again" apart from a genuine bug.
+        depot_paths = self.get_depot_paths([self.perforce_root])
+        if not depot_paths:
+            raise p4errors.WorkSpaceError(
+                "Could not resolve the depot root for %s. The server may be "
+                "unreachable, or your Perforce ticket may have expired -- try "
+                "`p4 login`." % self.perforce_root
+            )
+        self.depot_root = depot_paths[0]
 
     @classmethod
     def from_env(cls, *args, **kwargs):
