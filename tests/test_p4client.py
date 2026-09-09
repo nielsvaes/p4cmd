@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from p4cmd.p4cmd import P4Client
-from p4cmd.p4errors import P4CommandError
+from p4cmd.p4errors import P4CommandError, WorkSpaceError
 from p4cmd.p4file import P4File, Status
 from tests.conftest import make_fstat_dict
 
@@ -827,3 +827,45 @@ def test_sync_files_warns_when_file_missing_unexpectedly(p4client, caplog):
                 with caplog.at_level("WARNING", logger="p4cmd.p4cmd"):
                     p4client.sync_files([path])
     assert "didn't exist after syncing" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# __init__ depot-root resolution
+# ---------------------------------------------------------------------------
+
+def test_init_raises_workspace_error_when_depot_root_unresolvable(tmp_path):
+    """An unresolvable depot root must raise WorkSpaceError, not IndexError.
+
+    ``p4 where`` returns nothing when the client is not authenticated
+    (expired ticket), so ``get_depot_paths(...)[0]`` blew up with a bare
+    ``IndexError: list index out of range``. Callers that retry the
+    constructor to recover a dropped connection then log that meaningless
+    message instead of "you need to log in", and cannot distinguish an
+    auth failure from a real bug.
+    """
+    (tmp_path / ".p4config").write_text("P4PORT=ssl:perforce.example.com:1666\n")
+    with patch.object(P4Client, "host_online", return_value=True):
+        with patch.object(P4Client, "run_cmd", return_value=[]):
+            with pytest.raises(WorkSpaceError):
+                P4Client(
+                    str(tmp_path),
+                    user="testuser",
+                    client="testclient",
+                    server="ssl:perforce.example.com:1666",
+                )
+
+
+def test_init_error_message_mentions_login(tmp_path):
+    """The raised message must point at the likely cause (auth/reachability)."""
+    (tmp_path / ".p4config").write_text("P4PORT=ssl:perforce.example.com:1666\n")
+    with patch.object(P4Client, "host_online", return_value=True):
+        with patch.object(P4Client, "run_cmd", return_value=[]):
+            with pytest.raises(WorkSpaceError) as excinfo:
+                P4Client(
+                    str(tmp_path),
+                    user="testuser",
+                    client="testclient",
+                    server="ssl:perforce.example.com:1666",
+                )
+    message = str(excinfo.value).lower()
+    assert "login" in message or "ticket" in message
