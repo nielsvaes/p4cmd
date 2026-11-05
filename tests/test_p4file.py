@@ -1,5 +1,6 @@
 """Tests for p4cmd/p4file.py — P4File and Status."""
 import datetime
+import os
 
 import pytest
 
@@ -301,6 +302,62 @@ def test_needs_syncing_moved_deleted_with_old_have_returns_true():
     f.head_revision = "6"
     f.head_action = "move/delete"
     assert f.needs_syncing() is True
+
+
+# ---------------------------------------------------------------------------
+# needs_force_syncing: the workspace has the head revision, the disk doesn't
+# ---------------------------------------------------------------------------
+
+def test_needs_force_syncing_gone_from_disk_returns_true(tmp_path):
+    f = make_file(local_file_path=str(tmp_path / "gone.txt"), have_revision="5", head_revision="5")
+    assert f.needs_force_syncing() is True
+
+
+@pytest.mark.parametrize("name", ["file.txt", "folder"])
+def test_needs_force_syncing_on_disk_returns_false(tmp_path, name):
+    # Anything at the path counts as there, not only a file: a synced symlink can point to a folder
+    (tmp_path / "file.txt").write_text("")
+    (tmp_path / "folder").mkdir()
+    f = make_file(local_file_path=str(tmp_path / name), have_revision="5", head_revision="5")
+    assert f.needs_force_syncing() is False
+
+
+@pytest.mark.parametrize("have, head, action, head_action", [
+    ("3", "5", None, None),       # behind the head: a plain sync transfers it
+    (None, None, None, None),     # untracked
+    ("5", "5", "edit", None),     # sync -f doesn't affect open files
+    ("5", "5", "delete", None),   # p4 delete removed the local file itself
+    ("5", "5", None, "archive"),  # no content left to sync
+    ("5", "5", None, "purge"),
+])
+def test_needs_force_syncing_gone_from_disk_returns_false(tmp_path, have, head, action, head_action):
+    f = make_file(local_file_path=str(tmp_path / "gone.txt"), have_revision=have, head_revision=head,
+                  action=action, head_action=head_action)
+    assert f.needs_force_syncing() is False
+
+
+@pytest.mark.parametrize("local_path", [None, b"/ws/caf\xe9.txt"])
+def test_needs_force_syncing_without_a_str_path_returns_false(local_path):
+    # No local path, or one p4cmd left as bytes because it isn't valid UTF-8
+    f = make_file(local_file_path=local_path, have_revision="5", head_revision="5")
+    assert f.needs_force_syncing() is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows paths")
+@pytest.mark.parametrize("local_path, checked", [
+    ("C:/ws/file.txt", "\\\\?\\C:\\ws\\file.txt"),
+    ("\\\\server\\share\\file.txt", "\\\\?\\UNC\\server\\share\\file.txt"),
+    ("\\\\?\\C:\\ws\\file.txt", "\\\\?\\C:\\ws\\file.txt"),
+    ("//?/C:/ws/file.txt", "\\\\?\\C:\\ws\\file.txt"),
+    ("\\\\.\\C:\\ws\\file.txt", "\\\\.\\C:\\ws\\file.txt"),
+])
+def test_needs_force_syncing_checks_windows_paths_in_extended_form(monkeypatch, local_path, checked):
+    """The extended form lets a Python that isn't long-path aware, like Blender's, see paths of 260+ characters."""
+    checked_paths = []
+    monkeypatch.setattr(os.path, "lexists", lambda path: checked_paths.append(path) or True)
+    f = make_file(local_file_path=local_path, have_revision="5", head_revision="5")
+    assert f.needs_force_syncing() is False
+    assert checked_paths == [checked]
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 import datetime
+import os
 
 
 class Status:
@@ -13,6 +14,18 @@ class Status:
     UNKNOWN = "UNKNOWN"
     DELETED = "DELETED"
     MOVED_DELETED = "MOVED_DELETED"
+
+
+def _exists_on_disk(path):
+    """
+    os.path.lexists that also sees Windows paths of 260+ characters from a Python that isn't long-path aware, like
+    Blender's: the extended-length form (``\\\\?\\C:\\...``) has no such limit.
+    """
+    if os.name == "nt":
+        path = os.path.abspath(path)
+        if not path.startswith(("\\\\?\\", "\\\\.\\")):
+            path = "\\\\?\\UNC\\" + path[2:] if path.startswith("\\\\") else "\\\\?\\" + path
+    return os.path.lexists(path)
 
 
 class P4File:
@@ -88,6 +101,22 @@ class P4File:
         if self._have_revision is None:
             return False
         return self._have_revision < self._head_revision
+
+    def needs_force_syncing(self):
+        """
+        The file isn't open and the workspace has its head revision, but nothing is at its local path on this
+        machine. p4 sync skips such a file as up to date: sync_files(force=True) brings it back, or, if it was
+        deleted on purpose, reconcile_offline_files() opens it for delete. get_status() doesn't check the disk.
+        Not checked: a head revision that is archived or purged, which has no content to sync, and a local path
+        left as bytes because it isn't valid UTF-8.
+        """
+        if self.is_checked_out() or self._head_action in ("archive", "purge"):
+            return False
+        if not isinstance(self._local_file_path, str):
+            return False
+        if self._have_revision is None or self._have_revision != self._head_revision:
+            return False
+        return not _exists_on_disk(self._local_file_path)
 
     def get_status(self):
         if self._status_override is not None:
