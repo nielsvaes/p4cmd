@@ -1,7 +1,9 @@
+import io
 import os
 import marshal
 import subprocess
 import socket
+import tempfile
 import warnings
 from pprint import pformat
 
@@ -15,6 +17,26 @@ _log = logging.getLogger(__name__)
 
 MAX_CMD_LEN = 8190
 MAX_ARG_LEN = 8000  # max length of args string when combined, close to max, but leaving some extra margin
+
+
+def _run_command(command, cwd):
+    """
+    Run a shell command and return what it wrote to stdout, once it has exited.
+
+    The output goes to a temporary file rather than a pipe. Reading a pipe until it closes waits for every
+    process holding its write end, not just the command: on Windows, a process that something else in this
+    process starts at the same moment with handle inheritance (e.g. a host application starting a server on
+    another thread) inherits the write end and keeps it open, so the read never ends. The file is read once
+    the command has exited, whoever else holds it.
+
+    stdin is NUL: the parent's stdin isn't duplicated (OSError WinError 50 in non-interactive sessions, see
+    #13), and a command asking for input gets none instead of waiting for it.
+    """
+    with tempfile.TemporaryFile() as output:
+        with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, shell=True, cwd=cwd) as process:
+            process.wait()
+        output.seek(0)
+        return output.read()
 
 
 class P4Client(object):
@@ -165,36 +187,38 @@ class P4Client(object):
                 if len(command) > MAX_CMD_LEN:
                     # This shouldn't happen, but just in case the command prefix end up really long
                     _log.warning(
-                        f"Command length: {format(len(command))} exceeds MAX_CMD_LEN {MAX_CMD_LEN} on command: {MAX_CMD_LEN}")
+                        f"Command length: {format(len(command))} exceeds MAX_CMD_LEN {MAX_CMD_LEN} on command: {command}")
 
-                with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, shell=True, cwd=self.perforce_root) as pipe:
-                    output = pipe.stdout
-                    if not marshal_output:
-                        # Without -G, p4 emits plain text (and `p4 set` ignores -G even when passed),
-                        # so marshal.load is guaranteed to fail. Read stdout directly from this Popen
-                        # — it has stdin=PIPE, so it's safe in non-interactive sessions where the old
-                        # check_output fallback hit OSError(WinError 50) on DuplicateHandle.
+                output = _run_command(command, self.perforce_root)
+                if not marshal_output:
+                    # Without -G, p4 emits plain text (and `p4 set` ignores -G even when passed),
+                    # so marshal.load is guaranteed to fail. Use the output as it is — no second
+                    # subprocess, which in non-interactive sessions hit OSError(WinError 50) on
+                    # DuplicateHandle in the old check_output fallback.
+                    dict_list.append({
+                        "command": command,
+                        "code": "raw",
+                        "raw_output": output,
+                    })
+                else:
+                    stream = io.BytesIO(output)
+                    parsed = []
+                    try:
+                        while True:
+                            parsed.append(marshal.load(stream))
+                    except EOFError:
+                        dict_list.extend(parsed)
+                    except ValueError as error:
+                        # Output that isn't all marshaled dicts is returned whole, as one raw entry,
+                        # without the dicts read before the error (they're in it). It's the output
+                        # already read: running p4 again would repeat a sync or submit. With -G, p4
+                        # reports its errors on stdout, so this is all it said.
                         dict_list.append({
                             "command": command,
                             "code": "raw",
-                            "raw_output": output.read(),
+                            "error": str(error),
+                            "raw_output": output,
                         })
-                    else:
-                        try:
-                            while True:
-                                value_dict = marshal.load(output)
-                                dict_list.append(value_dict)
-                        except EOFError:
-                            pass
-                        except ValueError as error:
-                            output_dict = {
-                                "command": command,
-                                "code": "raw",
-                                "error": str(error),
-                                "raw_output": subprocess.check_output(command, stderr=subprocess.STDOUT, shell=True, cwd=self.perforce_root)
-                            }
-                            dict_list.append(output_dict)
-                    pipe.kill()
 
         # Check for error dicts in the results
         errors = [d for d in dict_list if d.get(b"code") == b"error" or d.get("code") == "error"]
