@@ -538,23 +538,7 @@ def test_run_cmd_no_chdir(p4client):
         # cwd should have been passed to Popen
         _, kwargs = mock_popen.call_args
         assert kwargs.get("cwd") == p4client.perforce_root
-
-
-def test_run_cmd_output_is_a_file_not_a_pipe(p4client):
-    """
-    p4 writes to a temporary file, read once p4 has exited, not to a pipe read until it closes:
-    a process that something else starts at the same moment with handle inheritance (a host
-    application starting a server on another thread) can inherit the write end of a pipe and keep
-    it open, and the read would wait for that process. stdin is NUL.
-    """
-    with patch("subprocess.Popen") as mock_popen:
-        fake_p4_popen(mock_popen, b"P4USER=niels.vaes (set)\n")
-        result = p4client.run_cmd("set", ["P4USER"], marshal_output=False, online_check=False)
-
-    _, kwargs = mock_popen.call_args
-    assert kwargs["stdout"] is not subprocess.PIPE and hasattr(kwargs["stdout"], "read")
-    assert kwargs["stdin"] is subprocess.DEVNULL
-    assert result[0]["raw_output"] == b"P4USER=niels.vaes (set)\n"
+        assert kwargs["stdin"] is subprocess.DEVNULL
 
 
 def test_run_command_does_not_wait_for_processes_holding_its_output():
@@ -681,6 +665,25 @@ def test_run_cmd_handles_string_key_error_dicts(p4client, caplog):
         with caplog.at_level(logging.WARNING):
             p4client.run_cmd("sync", file_list=["//depot/file.txt"])
     assert "some error" in caplog.text
+
+
+def test_run_cmd_value_error_returns_the_output_once(p4client):
+    """
+    Output that isn't all marshaled dicts gives one raw entry with all of it, without the dicts
+    read before the error, and p4 isn't run again (that would repeat a sync or submit).
+    """
+    import marshal as _m
+    output = _m.dumps({b"code": b"stat", b"depotFile": b"//depot/file.txt"}) + b"not marshal data\n"
+    with patch("subprocess.Popen") as mock_popen, \
+         patch("p4cmd.p4cmd.subprocess.check_output") as mock_check_output:
+        fake_p4_popen(mock_popen, output)
+        result = p4client.run_cmd("sync", file_list=["//depot/file.txt"], online_check=False)
+
+    assert len(result) == 1
+    assert result[0]["code"] == "raw"
+    assert result[0]["raw_output"] == output
+    assert mock_popen.call_count == 1
+    mock_check_output.assert_not_called()
 
 
 def test_run_cmd_value_error_fallback_no_warning(p4client, caplog):

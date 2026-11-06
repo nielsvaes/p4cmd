@@ -187,7 +187,7 @@ class P4Client(object):
                 if len(command) > MAX_CMD_LEN:
                     # This shouldn't happen, but just in case the command prefix end up really long
                     _log.warning(
-                        f"Command length: {format(len(command))} exceeds MAX_CMD_LEN {MAX_CMD_LEN} on command: {MAX_CMD_LEN}")
+                        f"Command length: {format(len(command))} exceeds MAX_CMD_LEN {MAX_CMD_LEN} on command: {command}")
 
                 output = _run_command(command, self.perforce_root)
                 if not marshal_output:
@@ -202,20 +202,23 @@ class P4Client(object):
                     })
                 else:
                     stream = io.BytesIO(output)
+                    parsed = []
                     try:
                         while True:
-                            value_dict = marshal.load(stream)
-                            dict_list.append(value_dict)
+                            parsed.append(marshal.load(stream))
                     except EOFError:
-                        pass
+                        dict_list.extend(parsed)
                     except ValueError as error:
-                        output_dict = {
+                        # Output that isn't all marshaled dicts is returned whole, as one raw entry,
+                        # without the dicts read before the error (they're in it). It's the output
+                        # already read: running p4 again would repeat a sync or submit. With -G, p4
+                        # reports its errors on stdout, so this is all it said.
+                        dict_list.append({
                             "command": command,
                             "code": "raw",
                             "error": str(error),
-                            "raw_output": subprocess.check_output(command, stderr=subprocess.STDOUT, shell=True, cwd=self.perforce_root)
-                        }
-                        dict_list.append(output_dict)
+                            "raw_output": output,
+                        })
 
         # Check for error dicts in the results
         errors = [d for d in dict_list if d.get(b"code") == b"error" or d.get("code") == "error"]
