@@ -1,14 +1,18 @@
 """Tests for p4cmd/p4cmd.py — P4Client with run_cmd mocked."""
 import logging
 import socket
+import subprocess
+import sys
+import tempfile
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from p4cmd.p4cmd import P4Client
+from p4cmd.p4cmd import P4Client, _run_command
 from p4cmd.p4errors import P4CommandError, WorkSpaceError
 from p4cmd.p4file import P4File, Status
-from tests.conftest import make_fstat_dict
+from tests.conftest import fake_p4_popen, make_fstat_dict
 
 
 # ---------------------------------------------------------------------------
@@ -526,12 +530,7 @@ def test_run_cmd_no_chdir(p4client):
          patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen, \
          patch.object(p4client, "host_online", return_value=True):
         # Simulate an empty marshal stream (EOF immediately)
-        import io
-        mock_pipe = MagicMock()
-        mock_pipe.stdout = io.BytesIO(b"")
-        mock_pipe.__enter__ = lambda s: s
-        mock_pipe.__exit__ = MagicMock(return_value=False)
-        mock_popen.return_value = mock_pipe
+        fake_p4_popen(mock_popen)
 
         p4client.run_cmd("changes", args=[], online_check=False)
 
@@ -539,6 +538,39 @@ def test_run_cmd_no_chdir(p4client):
         # cwd should have been passed to Popen
         _, kwargs = mock_popen.call_args
         assert kwargs.get("cwd") == p4client.perforce_root
+
+
+def test_run_cmd_output_is_a_file_not_a_pipe(p4client):
+    """
+    p4 writes to a temporary file, read once p4 has exited, not to a pipe read until it closes:
+    a process that something else starts at the same moment with handle inheritance (a host
+    application starting a server on another thread) can inherit the write end of a pipe and keep
+    it open, and the read would wait for that process. stdin is NUL.
+    """
+    with patch("subprocess.Popen") as mock_popen:
+        fake_p4_popen(mock_popen, b"P4USER=niels.vaes (set)\n")
+        result = p4client.run_cmd("set", ["P4USER"], marshal_output=False, online_check=False)
+
+    _, kwargs = mock_popen.call_args
+    assert kwargs["stdout"] is not subprocess.PIPE and hasattr(kwargs["stdout"], "read")
+    assert kwargs["stdin"] is subprocess.DEVNULL
+    assert result[0]["raw_output"] == b"P4USER=niels.vaes (set)\n"
+
+
+def test_run_command_does_not_wait_for_processes_holding_its_output():
+    """
+    A process that outlives the command and holds its output (here one the command leaves running;
+    in practice one that inherited it when something else started it at the same moment) doesn't
+    keep _run_command waiting. Read from a pipe until it closes, this took the 3 s of that process.
+    """
+    if sys.platform == "win32":
+        command = "echo hi& start /b ping -n 4 127.0.0.1 > NUL"
+    else:
+        command = "echo hi; sleep 3 &"
+    start = time.perf_counter()
+    output = _run_command(command, tempfile.gettempdir())
+    assert output.strip() == b"hi"
+    assert time.perf_counter() - start < 2.0
 
 
 def test_get_p4_setting_malformed_output(p4client):
@@ -606,11 +638,7 @@ def test_run_cmd_logs_warning_on_error_dicts(p4client, caplog):
         buf = _io.BytesIO()
         _m.dump(error_dict, buf)
         _m.dump(ok_dict, buf)
-        buf.seek(0)
-        mock_popen.return_value.__enter__ = lambda s: s
-        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
-        mock_popen.return_value.stdout = buf
-        mock_popen.return_value.kill = MagicMock()
+        fake_p4_popen(mock_popen, buf.getvalue())
         with caplog.at_level(logging.WARNING):
             result = p4client.run_cmd("sync", file_list=["//depot/file.txt", "//depot/other.txt"])
     assert len(result) == 2  # both dicts still returned
@@ -624,11 +652,7 @@ def test_run_cmd_raise_on_errors(p4client):
         import marshal as _m, io as _io
         buf = _io.BytesIO()
         _m.dump(error_dict, buf)
-        buf.seek(0)
-        mock_popen.return_value.__enter__ = lambda s: s
-        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
-        mock_popen.return_value.stdout = buf
-        mock_popen.return_value.kill = MagicMock()
+        fake_p4_popen(mock_popen, buf.getvalue())
         with pytest.raises(P4CommandError, match="file\\(s\\) not on client"):
             p4client.run_cmd("sync", file_list=["//depot/file.txt"], raise_on_errors=True)
 
@@ -640,11 +664,7 @@ def test_run_cmd_no_raise_without_errors(p4client):
         import marshal as _m, io as _io
         buf = _io.BytesIO()
         _m.dump(ok_dict, buf)
-        buf.seek(0)
-        mock_popen.return_value.__enter__ = lambda s: s
-        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
-        mock_popen.return_value.stdout = buf
-        mock_popen.return_value.kill = MagicMock()
+        fake_p4_popen(mock_popen, buf.getvalue())
         result = p4client.run_cmd("sync", file_list=["//depot/file.txt"], raise_on_errors=True)
     assert result == [ok_dict]
 
@@ -657,11 +677,7 @@ def test_run_cmd_handles_string_key_error_dicts(p4client, caplog):
         import marshal as _m, io as _io
         buf = _io.BytesIO()
         _m.dump(error_dict, buf)
-        buf.seek(0)
-        mock_popen.return_value.__enter__ = lambda s: s
-        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
-        mock_popen.return_value.stdout = buf
-        mock_popen.return_value.kill = MagicMock()
+        fake_p4_popen(mock_popen, buf.getvalue())
         with caplog.at_level(logging.WARNING):
             p4client.run_cmd("sync", file_list=["//depot/file.txt"])
     assert "some error" in caplog.text
@@ -670,12 +686,7 @@ def test_run_cmd_handles_string_key_error_dicts(p4client, caplog):
 def test_run_cmd_value_error_fallback_no_warning(p4client, caplog):
     """The marshal_output=False path (e.g. `p4 set`) must not log spurious error warnings."""
     with patch("subprocess.Popen") as mock_popen:
-        import io as _io
-        buf = _io.BytesIO(b"P4USER=niels.vaes (set)\n")
-        mock_popen.return_value.__enter__ = lambda s: s
-        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
-        mock_popen.return_value.stdout = buf
-        mock_popen.return_value.kill = MagicMock()
+        fake_p4_popen(mock_popen, b"P4USER=niels.vaes (set)\n")
         with caplog.at_level(logging.WARNING):
             result = p4client.get_p4_setting("P4USER")
     assert result == "niels.vaes"
@@ -688,17 +699,13 @@ def test_run_cmd_no_global_options_does_not_spawn_second_subprocess(p4client):
     p4 outputs plain text — marshal.load is guaranteed to fail. The old fallback
     spawned a second subprocess via check_output without pinning stdin, which
     triggered OSError(WinError 50) on DuplicateHandle in non-interactive sessions
-    (UE commandlets, scheduled tasks, CI). The fix reads stdout directly from the
-    already-open Popen, which has stdin=PIPE.
+    (UE commandlets, scheduled tasks, CI). The fix uses the output of the one
+    subprocess, whose stdin is NUL.
     """
-    import io as _io
     p4_set_output = b"P4USER=niels.vaes (set)\r\n"
     with patch("subprocess.Popen") as mock_popen, \
          patch("p4cmd.p4cmd.subprocess.check_output") as mock_check_output:
-        mock_popen.return_value.__enter__ = lambda s: s
-        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
-        mock_popen.return_value.stdout = _io.BytesIO(p4_set_output)
-        mock_popen.return_value.kill = MagicMock()
+        fake_p4_popen(mock_popen, p4_set_output)
 
         result = p4client.get_p4_setting("P4USER")
 
@@ -708,13 +715,9 @@ def test_run_cmd_no_global_options_does_not_spawn_second_subprocess(p4client):
 
 def test_run_cmd_use_global_options_deprecation_alias(p4client):
     """The old `use_global_options` kwarg is accepted but emits DeprecationWarning."""
-    import io as _io
     import warnings as _warnings
     with patch("subprocess.Popen") as mock_popen:
-        mock_popen.return_value.__enter__ = lambda s: s
-        mock_popen.return_value.__exit__ = MagicMock(return_value=False)
-        mock_popen.return_value.stdout = _io.BytesIO(b"P4USER=niels.vaes (set)\n")
-        mock_popen.return_value.kill = MagicMock()
+        fake_p4_popen(mock_popen, b"P4USER=niels.vaes (set)\n")
 
         with _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")

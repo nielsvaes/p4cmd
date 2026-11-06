@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from p4cmd.p4cmd import P4Client
 
@@ -7,6 +7,20 @@ from p4cmd.p4cmd import P4Client
 def make_fstat_dict(**kwargs):
     """Build a bytes-keyed dict like P4's marshaled fstat output."""
     return {k.encode(): v.encode() for k, v in kwargs.items()}
+
+
+def fake_p4_popen(mock_popen, output=b""):
+    """Make a patched subprocess.Popen act like p4 writing ``output`` (bytes) to its stdout, which
+    run_cmd gives it as a file."""
+    def popen(*args, **kwargs):
+        kwargs["stdout"].write(output)
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.__exit__.return_value = False
+        return process
+
+    mock_popen.side_effect = popen
+    return mock_popen
 
 
 @pytest.fixture
