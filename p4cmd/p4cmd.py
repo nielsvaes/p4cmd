@@ -841,22 +841,34 @@ class P4Client(object):
         """
         Deletes a changelist via changelist number or description. Will fail if any files are checked out or shelved files exist.
         The default changelist is never deleted, reverted or unshelved.
-        :param changelist: *int* or numeric *string*: that changelist number. Any other *string*: deletes every
-                           pending changelist whose description matches it
+        :param changelist: *int* or *bytes*: the number of one of your pending changelists. *string*: if it's the
+                           number of one of your pending changelists, that changelist; otherwise every pending
+                           changelist whose description matches it (so a description made of digits still works)
         :param perfect_match_only: *bool* only delete if there's a perfect match of the changelist description
         :param case_sensitive: *bool*
         :param delete_shelved_files: *bool* If True, will delete all shelved files and then delete the CL.
         :param obliterate: *bool* If True, will revert all files, deleted shelved files and then delete the CL
+        :raises ValueError: if ``changelist`` is empty, which as a description would match every changelist
+        :raises p4errors.P4cmdError: if an *int* or *bytes* isn't one of your pending changelists, checked before
+                                     reverting
+        :raises p4errors.P4CommandError: if p4 fails to delete a changelist
         """
-        info_dicts = []
-        if str(changelist).strip().isdigit():
-            cl_nums = [int(changelist)]
-        else:
-            cl_nums = self.get_pending_changelists(changelist, perfect_match_only, case_sensitive)
-        for cl in cl_nums:
-            if cl == "default":
-                continue  # get_pending_changelists always appends it; reverting it would lose the user's work
+        is_number = isinstance(changelist, (int, bytes))
+        if isinstance(changelist, bytes):
+            changelist = changelist.decode()
+        text = str(changelist).strip()
+        if not text:
+            raise ValueError("No changelist given: an empty description would delete every pending changelist")
 
+        info_dicts = []
+        if text.isdecimal() and int(text) in self.get_pending_changelists(include_default=False):
+            cl_nums = [int(text)]
+        elif is_number:
+            raise p4errors.P4cmdError(f"Changelist {changelist} isn't one of your pending changelists")
+        else:
+            cl_nums = self.get_pending_changelists(changelist, perfect_match_only, case_sensitive,
+                                                   include_default=False)
+        for cl in cl_nums:
             # revert all files, then make sure shelved files are also deleted
             if obliterate:
                 info_dicts.append(self.revert_changelist(changelist=cl))
@@ -865,8 +877,7 @@ class P4Client(object):
             if delete_shelved_files:
                 info_dicts.append(self.delete_shelf(cl))
 
-            info_dicts.append(self.run_cmd('change', args=['-d', cl]))
-            # TODO: Break down info dicts and look for errors
+            info_dicts.append(self.run_cmd('change', args=['-d', cl], raise_on_errors=True))
         return info_dicts
 
     def get_shelved_files(self):
@@ -877,7 +888,9 @@ class P4Client(object):
         :return:
         """
         files_and_cl = []
-        changelists = self.get_pending_changelists()
+        changelists = self.get_pending_changelists(include_default=False)
+        if not changelists:
+            return files_and_cl
         info_dicts = self.run_cmd("describe", args=["-S", " ".join("%s" % cl for cl in changelists)])
         for info_dict in info_dicts:
             for key in info_dict.keys():
@@ -1154,7 +1167,7 @@ class P4Client(object):
         return depot_paths
 
     def get_pending_changelists(self, description_filter="", perfect_match_only=False, case_sensitive=False,
-                                descriptions=False):
+                                descriptions=False, include_default=True):
         """
         Returns all the pending change lists, filtered on the changelist description
 
@@ -1162,6 +1175,7 @@ class P4Client(object):
         :param perfect_match_only: *bool* if True, will only return CLs with the exact matching filter
         :param case_sensitive: *bool*
         :param descriptions: *bool* if set to True, will return the changelist description instead of the changelist number
+        :param include_default: *bool* if True (default), "default" is appended to the list, whatever the filter
         :return: *list* with changelist numbers as ints
         :raises p4errors.ServerOffline: if the server is unreachable
         :raises p4errors.P4CommandError: if p4 reports an error, like an expired login
@@ -1201,9 +1215,9 @@ class P4Client(object):
 
         if descriptions:
             return_list = [pair[1] for pair in changelists]
-            return_list.append("default")
         else:
             return_list = [int(pair[0]) for pair in changelists]
+        if include_default:
             return_list.append("default")
         return return_list
 
