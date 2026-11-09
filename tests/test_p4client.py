@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from p4cmd.p4cmd import P4Client, _run_command
-from p4cmd.p4errors import P4CommandError, WorkSpaceError
+from p4cmd.p4cmd import P4Client, _p4port_address, _run_command
+from p4cmd.p4errors import P4CommandError, ServerOffline, WorkSpaceError
 from p4cmd.p4file import P4File, Status
 from tests.conftest import fake_p4_popen, make_fstat_dict
 
@@ -503,6 +503,48 @@ def test_host_online_oserror(p4client):
         assert p4client.host_online() is False
 
 
+@pytest.mark.parametrize("p4port, address", [
+    ("ssl64:perforce.example.com:1666", ("perforce.example.com", 1666)),
+    ("perforce:1666", ("perforce", 1666)),
+    ("1666", ("localhost", 1666)),
+    ("ssl:1666", ("localhost", 1666)),
+    ("tcp6:[::1]:1666", ("::1", 1666)),
+    ("[fe80::1]:1666", ("fe80::1", 1666)),
+    ("rsh:p4d -r /depot -i", None),
+])
+def test_p4port_address(p4port, address):
+    assert _p4port_address(p4port) == address
+
+
+def test_host_online_without_a_host_to_check(p4client):
+    """A P4PORT that runs a command (rsh:) has no host to connect to: commands run and p4 reports."""
+    p4client.server = "rsh:p4d -r /depot -i"
+    with patch("p4cmd.p4cmd.socket.create_connection") as mock_conn:
+        assert p4client.host_online() is True
+    mock_conn.assert_not_called()
+
+
+def test_run_cmd_does_not_run_p4_when_the_server_is_unreachable(p4client):
+    """p4 would only fail the same way after its own connection timeout (about 21 s on Windows)."""
+    with patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen, \
+         patch.object(p4client, "host_online", return_value=False):
+        fake_p4_popen(mock_popen, b"")
+        assert p4client.run_cmd("sync", file_list=["//depot/file.txt"]) == []
+        with pytest.raises(ServerOffline):
+            p4client.run_cmd("sync", file_list=["//depot/file.txt"], raise_on_errors=True)
+    mock_popen.assert_not_called()
+
+
+def test_run_cmd_without_online_check_runs_p4(p4client):
+    """online_check=False skips the check, so p4 runs whatever it would say."""
+    with patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen, \
+         patch.object(p4client, "host_online", return_value=False) as mock_online:
+        fake_p4_popen(mock_popen, b"")
+        p4client.run_cmd("sync", file_list=["//depot/file.txt"], online_check=False)
+    mock_online.assert_not_called()
+    assert mock_popen.call_count == 1
+
+
 # ---------------------------------------------------------------------------
 # changelist_exists
 # ---------------------------------------------------------------------------
@@ -687,7 +729,7 @@ def test_run_cmd_logs_warning_on_error_dicts(p4client, caplog):
         _m.dump(ok_dict, buf)
         fake_p4_popen(mock_popen, buf.getvalue())
         with caplog.at_level(logging.WARNING):
-            result = p4client.run_cmd("sync", file_list=["//depot/file.txt", "//depot/other.txt"])
+            result = p4client.run_cmd("sync", file_list=["//depot/file.txt", "//depot/other.txt"], online_check=False)
     assert len(result) == 2  # both dicts still returned
     assert "file(s) not on client" in caplog.text
 
@@ -701,7 +743,7 @@ def test_run_cmd_raise_on_errors(p4client):
         _m.dump(error_dict, buf)
         fake_p4_popen(mock_popen, buf.getvalue())
         with pytest.raises(P4CommandError, match="file\\(s\\) not on client"):
-            p4client.run_cmd("sync", file_list=["//depot/file.txt"], raise_on_errors=True)
+            p4client.run_cmd("sync", file_list=["//depot/file.txt"], raise_on_errors=True, online_check=False)
 
 
 def test_run_cmd_no_raise_without_errors(p4client):
@@ -712,7 +754,7 @@ def test_run_cmd_no_raise_without_errors(p4client):
         buf = _io.BytesIO()
         _m.dump(ok_dict, buf)
         fake_p4_popen(mock_popen, buf.getvalue())
-        result = p4client.run_cmd("sync", file_list=["//depot/file.txt"], raise_on_errors=True)
+        result = p4client.run_cmd("sync", file_list=["//depot/file.txt"], raise_on_errors=True, online_check=False)
     assert result == [ok_dict]
 
 
@@ -726,7 +768,7 @@ def test_run_cmd_handles_string_key_error_dicts(p4client, caplog):
         _m.dump(error_dict, buf)
         fake_p4_popen(mock_popen, buf.getvalue())
         with caplog.at_level(logging.WARNING):
-            p4client.run_cmd("sync", file_list=["//depot/file.txt"])
+            p4client.run_cmd("sync", file_list=["//depot/file.txt"], online_check=False)
     assert "some error" in caplog.text
 
 

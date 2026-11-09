@@ -55,6 +55,28 @@ def _run_command(command, cwd, input=None, stderr=None, check=False):
     return data
 
 
+# P4PORT's transport prefixes. `rsh:` runs a command instead of naming a host.
+P4PORT_PROTOCOLS = {"tcp", "tcp4", "tcp6", "tcp46", "tcp64", "ssl", "ssl4", "ssl6", "ssl46", "ssl64"}
+
+
+def _p4port_address(p4port):
+    """
+    The host and port a P4PORT connects to: ("perforce.example.com", 1666) for "ssl64:perforce.example.com:1666",
+    ("localhost", 1666) for "1666", ("::1", 1666) for "tcp6:[::1]:1666". None when it doesn't name a host and
+    port, like "rsh:p4d -r /depot -i".
+    """
+    p4port = p4port.strip()
+    protocol, _, address = p4port.partition(":")
+    if protocol.lower() == "rsh":
+        return None
+    if protocol.lower() not in P4PORT_PROTOCOLS:
+        address = p4port
+    host, _, port = address.rpartition(":")
+    if not port.isdigit():
+        return None
+    return host.strip("[]") or "localhost", int(port)
+
+
 class P4Client(object):
     def __init__(self, perforce_root, user=None, client=None, server=None, silent=None, max_parallel_connections=4,
                  max_wait=None):
@@ -175,7 +197,9 @@ class P4Client(object):
             False for commands that don't honor ``-G`` (notably ``p4 set``, which only reads local settings)
             or when user/client haven't been resolved yet — output is then returned verbatim under the
             ``raw_output`` key.
-        :param online_check: *bool* if set to True, will first check if the remote server is reachable before executing the command.
+        :param online_check: *bool* if True (default), first checks that the server is reachable with
+            ``host_online()``. When it isn't, p4 isn't run: this returns an empty list, as p4 itself would
+            once its own connection attempt timed out, or raises p4errors.ServerOffline with raise_on_errors.
         :return: *list* of dictionaries with either the marshaled returns of the command or dictionaries with the
         raw output of the command
         """
@@ -201,8 +225,12 @@ class P4Client(object):
         if file_list is None:
             file_list = []
 
-        if online_check:
-            self.host_online()
+        if online_check and not self.host_online():
+            # p4 would only fail the same way after waiting out its own connection timeout (about 21 s on
+            # Windows): `p4 -G` writes nothing to stdout when it can't connect. host_online() logged why.
+            if raise_on_errors:
+                raise p4errors.ServerOffline(f"Can't connect to {self.server}")
+            return []
 
         file_list = [f'"{f}"' for f in file_list]
 
@@ -309,7 +337,7 @@ class P4Client(object):
         :raises p4errors.ServerOffline: if the server is unreachable
         """
         if not self.host_online():
-            raise p4errors.ServerOffline("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
+            raise p4errors.ServerOffline(f"Can't connect to {self.server}")
         result = self.run_cmd("login", args=["-s"])
         info_dict = result[0]
         expiration_seconds = self.__get_dict_value(info_dict, "TicketExpiration", None)
@@ -459,7 +487,7 @@ class P4Client(object):
         :raises p4errors.ServerOffline: if the server is unreachable
         """
         if not self.host_online():
-            raise p4errors.ServerOffline("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
+            raise p4errors.ServerOffline(f"Can't connect to {self.server}")
 
         template = _run_command(
             f'{self.__p4_prefix()} -u {self.user} -c {self.client} --field "Files=" change -o',
@@ -1265,18 +1293,22 @@ class P4Client(object):
 
     def host_online(self, timeout=2.0):
         """
-        Checks if the host for this client is online
+        Checks if the host for this client is online, by opening a TCP connection to the host and port in
+        P4PORT. True when P4PORT doesn't name a host and port (``rsh:``), so commands still run and p4 itself
+        reports whether it can connect.
 
         :return: *bool*
         """
-        port = self.__port_number()
-        host = self.__server_address()
+        address = _p4port_address(self.server)
+        if address is None:
+            return True
+        host, port = address
 
         try:
             with socket.create_connection((host, port), timeout=timeout):
                 return True
         except socket.timeout:
-            _log.warning(f"Connection to {host} on port {port} timed out after {timeout} seconds, the running command might not complete correctly")
+            _log.warning(f"Connection to {host} on port {port} timed out after {timeout} seconds")
             return False
         except ConnectionRefusedError:
             _log.warning(f"Connection to {host} on port {port} refused to connect, is the server still up?")
@@ -1294,24 +1326,6 @@ class P4Client(object):
         if self.max_wait is None:
             return "p4"
         return f"p4 -vnet.maxwait={self.max_wait}"
-
-    def __server_address(self):
-        """
-        Returns the server address this client is connecting to, based on P4PORT
-
-        :return: *string* server address
-        """
-        server = self.server.split(":")[-2]
-        return server
-
-    def __port_number(self):
-        """
-        Returns the port this client is connecting to, based on P4PORT
-
-        :return: *string* port number
-        """
-        port = self.server.split(":")[-1]
-        return port
 
     def __ensure_changelist(self, changelist):
         """
