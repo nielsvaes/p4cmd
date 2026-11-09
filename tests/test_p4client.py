@@ -152,6 +152,22 @@ def test_fstat_basic(p4client):
     assert f.head_revision == 3
 
 
+def test_fstat_file_gone_from_disk_needs_force_syncing(p4client, tmp_path):
+    """fstat gives have == head for a file deleted outside Perforce: only the disk tells it apart."""
+    (tmp_path / "here.png").write_text("")
+    fstat = [
+        make_fstat_dict(depotFile="//depot/project/gone.png", clientFile=str(tmp_path / "gone.png"),
+                        haveRev="1", headRev="1", headAction="add"),
+        make_fstat_dict(depotFile="//depot/project/here.png", clientFile=str(tmp_path / "here.png"),
+                        haveRev="1", headRev="1", headAction="add"),
+    ]
+    with patch.object(p4client, "find_p4_client", return_value="testclient"):
+        gone, here = p4client.fstat_to_p4_files(fstat)
+
+    assert gone.needs_force_syncing() is True
+    assert here.needs_force_syncing() is False
+
+
 def test_fstat_deleted_excluded_by_default(p4client):
     fstat = [
         make_fstat_dict(

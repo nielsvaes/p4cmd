@@ -163,7 +163,7 @@ The old `silent=True` constructor kwarg is deprecated and now a no-op — config
 
 | Method | Description |
 |---|---|
-| `get_status()` | Returns a `Status` constant (see below) |
+| `get_status()` | Returns a `Status` constant (see below). Doesn't check the disk: see `needs_force_syncing()` |
 | `is_open_for_add()` | File is marked for add |
 | `is_open_for_edit()` | File is marked for edit |
 | `is_marked_for_delete()` | File is marked for delete |
@@ -177,6 +177,7 @@ The old `silent=True` constructor kwarg is deprecated and now a no-op — config
 | `is_under_client_root()` | File is within the workspace mapping |
 | `is_valid()` | Has at least one path set |
 | `needs_syncing()` | Behind head revision and needs sync |
+| `needs_force_syncing()` | Not open, has the head revision, but gone from disk: needs `sync_files(force=True)` |
 | `get_file_size(in_megabyte=True)` | File size in MB or bytes |
 
 ### Status constants
