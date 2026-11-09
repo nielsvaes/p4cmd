@@ -840,15 +840,23 @@ class P4Client(object):
                           obliterate=False):
         """
         Deletes a changelist via changelist number or description. Will fail if any files are checked out or shelved files exist.
-        :param changelist: *string* or *int* change list number
-        :param perfect_match_only: bool* only delete if there's a perfect match of the changelist description
+        The default changelist is never deleted, reverted or unshelved.
+        :param changelist: *int* or numeric *string*: that changelist number. Any other *string*: deletes every
+                           pending changelist whose description matches it
+        :param perfect_match_only: *bool* only delete if there's a perfect match of the changelist description
         :param case_sensitive: *bool*
-        :param delete_shelved_files: *bool* If True, will delete all shelved files and then delete the CL. 
+        :param delete_shelved_files: *bool* If True, will delete all shelved files and then delete the CL.
         :param obliterate: *bool* If True, will revert all files, deleted shelved files and then delete the CL
         """
         info_dicts = []
-        cl_num = self.get_pending_changelists(changelist, perfect_match_only, case_sensitive)
-        for cl in cl_num:
+        if str(changelist).strip().isdigit():
+            cl_nums = [int(changelist)]
+        else:
+            cl_nums = self.get_pending_changelists(changelist, perfect_match_only, case_sensitive)
+        for cl in cl_nums:
+            if cl == "default":
+                continue  # get_pending_changelists always appends it; reverting it would lose the user's work
+
             # revert all files, then make sure shelved files are also deleted
             if obliterate:
                 info_dicts.append(self.revert_changelist(changelist=cl))

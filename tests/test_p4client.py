@@ -652,6 +652,41 @@ def test_changelist_exists_description_not_found(p4client):
 
 
 # ---------------------------------------------------------------------------
+# delete_changelist
+# ---------------------------------------------------------------------------
+
+def _delete_changelist_commands(p4client, changelist, output=b"", **kwargs):
+    """The p4 command lines delete_changelist runs, with p4 itself faked."""
+    with patch.object(p4client, "host_online", return_value=True), \
+         patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen:
+        fake_p4_popen(mock_popen, output)
+        p4client.delete_changelist(changelist, **kwargs)
+    return [c.args[0] for c in mock_popen.call_args_list]
+
+
+@pytest.mark.parametrize("changelist", [1454495, "1454495"])
+def test_delete_changelist_number_deletes_that_changelist(p4client, changelist):
+    """A number was taken as a description filter, matched nothing and ran `change -d default`."""
+    commands = _delete_changelist_commands(p4client, changelist)
+    assert any("change -d 1454495" in c for c in commands)
+
+
+def test_delete_changelist_obliterate_never_reverts_default(p4client):
+    """obliterate=True with a number ran `revert -c default //...`, reverting the user's default changelist."""
+    commands = _delete_changelist_commands(p4client, 1454495, obliterate=True)
+    assert any("revert -c 1454495" in c for c in commands)
+    assert not any("default" in c for c in commands)
+
+
+def test_delete_changelist_unmatched_description_never_touches_default(p4client):
+    import marshal
+    changes = marshal.dumps(make_fstat_dict(change="123", desc="Other work\n"))
+    commands = _delete_changelist_commands(p4client, "Export", output=changes, obliterate=True)
+    assert not any("default" in c for c in commands)
+    assert not any("change -d" in c for c in commands)
+
+
+# ---------------------------------------------------------------------------
 # Robustness fixes
 # ---------------------------------------------------------------------------
 
