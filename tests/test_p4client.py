@@ -557,6 +557,12 @@ def test_run_command_does_not_wait_for_processes_holding_its_output():
     assert time.perf_counter() - start < 2.0
 
 
+def test_run_command_gives_the_command_its_input():
+    """input reaches the command as its stdin (the form for `p4 change -i`), and its output comes back."""
+    command = f'"{sys.executable}" -c "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read().upper())"'
+    assert _run_command(command, tempfile.gettempdir(), input=b"change form\n") == b"CHANGE FORM\n"
+
+
 def test_get_p4_setting_malformed_output(p4client):
     """get_p4_setting returns None instead of crashing on output with no '='."""
     bad_dict = {"raw_output": b"P4CLIENT (no equals sign here)"}
@@ -568,8 +574,9 @@ def test_get_p4_setting_malformed_output(p4client):
 def test_make_new_changelist_malformed_output(p4client):
     """make_new_changelist returns None instead of crashing on unexpected p4 output."""
     template = b"Change: new\n\nDescription:\n\t<enter description here>\n\nFiles:\n"
-    with patch("p4cmd.p4cmd.subprocess.check_output", side_effect=[template, b"Unexpected output\n"]), \
+    with patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen, \
          patch.object(p4client, "host_online", return_value=True):
+        fake_p4_popen(mock_popen, [template, b"Unexpected output\n"])
         result = p4client.make_new_changelist("test description")
     assert result is None
 
@@ -577,16 +584,56 @@ def test_make_new_changelist_malformed_output(p4client):
 def test_make_new_changelist_preserves_newlines(p4client):
     """make_new_changelist correctly handles descriptions containing newlines."""
     template = b"Change: new\n\nDescription:\n\t<enter description here>\n\nFiles:\n"
-    with patch("p4cmd.p4cmd.subprocess.check_output", side_effect=[template, b"Change 12345 created.\n"]) as mock_co, \
+    with patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen, \
          patch.object(p4client, "host_online", return_value=True):
+        fake_p4_popen(mock_popen, [template, b"Change 12345 created.\n"])
         result = p4client.make_new_changelist("Line one.\nLine two.")
 
     assert result == 12345
     # Verify the description sent to p4 change -i has tab-indented lines
-    submitted = mock_co.call_args_list[1]
-    input_data = submitted[1]["input"].decode()
+    change_o_stdin, change_i_stdin = mock_popen.stdin_received
+    assert change_o_stdin is subprocess.DEVNULL
+    input_data = change_i_stdin.decode()
     assert "\tLine one." in input_data
     assert "\tLine two." in input_data
+    # In the workspace root, like run_cmd, so both use its .p4config
+    assert all(call.kwargs["cwd"] == p4client.perforce_root for call in mock_popen.call_args_list)
+
+
+def test_make_new_changelist_raises_when_p4_fails(p4client):
+    """A failing p4 raises CalledProcessError with what p4 said, and no form is sent to `change -i`."""
+    with patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen, \
+         patch.object(p4client, "host_online", return_value=True):
+        fake_p4_popen(mock_popen, b"Perforce password (P4PASSWD) invalid or unset.\n", returncode=1)
+        with pytest.raises(subprocess.CalledProcessError) as error:
+            p4client.make_new_changelist("test description")
+    assert b"P4PASSWD" in error.value.output
+    assert mock_popen.call_count == 1
+
+
+def test_update_changelist_description_sends_the_new_description(p4client):
+    """The changelist's form goes back to `change -i` with the new description in place of the old."""
+    template = (b"Change: 12345\n\nClient: testclient\n\nUser: testuser\n\nStatus: pending\n\n"
+                b"Description:\n\tOld description\n\nFiles:\n")
+    with patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen:
+        fake_p4_popen(mock_popen, [template, b"Change 12345 updated.\n"])
+        result = p4client.update_changelist_description(12345, "New description")
+
+    assert result is True
+    change_o_stdin, change_i_stdin = mock_popen.stdin_received
+    assert change_o_stdin is subprocess.DEVNULL
+    assert "\tNew description" in change_i_stdin.decode()
+    assert "Old description" not in change_i_stdin.decode()
+
+
+def test_update_changelist_description_returns_false_when_p4_fails(p4client, caplog):
+    """A failing p4 is logged and gives False."""
+    with patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen:
+        fake_p4_popen(mock_popen, b"", returncode=1)
+        with caplog.at_level(logging.ERROR):
+            result = p4client.update_changelist_description(12345, "New description")
+    assert result is False
+    assert "Failed to update changelist description" in caplog.text
 
 
 def test_get_pending_changelists_none_desc(p4client):

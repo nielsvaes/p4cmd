@@ -1,3 +1,4 @@
+import contextlib
 import io
 import os
 import marshal
@@ -19,7 +20,7 @@ MAX_CMD_LEN = 8190
 MAX_ARG_LEN = 8000  # max length of args string when combined, close to max, but leaving some extra margin
 
 
-def _run_command(command, cwd):
+def _run_command(command, cwd, input=None, stderr=None, check=False):
     """
     Run a shell command and return what it wrote to stdout, once it has exited.
 
@@ -29,14 +30,29 @@ def _run_command(command, cwd):
     another thread) inherits the write end and keeps it open, so the read never ends. The file is read once
     the command has exited, whoever else holds it.
 
-    stdin is NUL: the parent's stdin isn't duplicated (OSError WinError 50 in non-interactive sessions, see
-    #13), and a command asking for input gets none instead of waiting for it.
+    stdin is NUL, or a temporary file holding ``input``: the parent's stdin isn't duplicated (OSError
+    WinError 50 in non-interactive sessions, see #13), and a command asking for input it wasn't given gets
+    none instead of waiting for it.
+
+    :param input: *bytes* for the command's stdin, e.g. the form for ``p4 change -i``
+    :param stderr: as for subprocess.Popen: None leaves it as it is, subprocess.STDOUT adds it to the output
+    :param check: *bool* if True, a non-zero exit status raises subprocess.CalledProcessError with the
+        output, like subprocess.check_output
     """
-    with tempfile.TemporaryFile() as output:
-        with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, shell=True, cwd=cwd) as process:
-            process.wait()
+    with contextlib.ExitStack() as files:
+        stdin = subprocess.DEVNULL
+        if input is not None:
+            stdin = files.enter_context(tempfile.TemporaryFile())
+            stdin.write(input)
+            stdin.seek(0)
+        output = files.enter_context(tempfile.TemporaryFile())
+        with subprocess.Popen(command, stdin=stdin, stdout=output, stderr=stderr, shell=True, cwd=cwd) as process:
+            returncode = process.wait()
         output.seek(0)
-        return output.read()
+        data = output.read()
+    if check and returncode:
+        raise subprocess.CalledProcessError(returncode, command, output=data)
+    return data
 
 
 class P4Client(object):
@@ -427,18 +443,20 @@ class P4Client(object):
         if not self.host_online():
             raise p4errors.ServerOffline("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
 
-        template = subprocess.check_output(
+        template = _run_command(
             f'p4 -u {self.user} -c {self.client} --field "Files=" change -o',
+            self.perforce_root,
             stderr=subprocess.STDOUT,
-            shell=True).decode()
+            check=True).decode()
 
         modified = self.__replace_description_in_template(template, description)
 
-        output = subprocess.check_output(
+        output = _run_command(
             f"p4 -u {self.user} -c {self.client} change -i",
+            self.perforce_root,
             input=modified.encode(),
             stderr=subprocess.STDOUT,
-            shell=True).decode()
+            check=True).decode()
 
         parts = output.split(" ")
         if len(parts) < 2:
@@ -483,15 +501,18 @@ class P4Client(object):
         try:
             changelist = self.__ensure_changelist(changelist)
 
-            template = subprocess.check_output(
+            template = _run_command(
                 f'p4 -u {self.user} -c {self.client} change -o {changelist}',
-                shell=True).decode()
+                self.perforce_root,
+                check=True).decode()
 
             modified = self.__replace_description_in_template(template, new_description)
 
-            result = subprocess.check_output(
+            _run_command(
                 f'p4 -u {self.user} -c {self.client} change -i',
-                input=modified.encode(), shell=True).decode()
+                self.perforce_root,
+                input=modified.encode(),
+                check=True)
 
             return True
         except subprocess.CalledProcessError as e:

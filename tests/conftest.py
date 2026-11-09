@@ -1,3 +1,5 @@
+import subprocess
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -9,14 +11,23 @@ def make_fstat_dict(**kwargs):
     return {k.encode(): v.encode() for k, v in kwargs.items()}
 
 
-def fake_p4_popen(mock_popen, output=b""):
+def fake_p4_popen(mock_popen, output=b"", returncode=0):
     """Make a patched subprocess.Popen act like p4 writing ``output`` (bytes) to its stdout, which
-    run_cmd gives it as a file."""
+    _run_command gives it as a file, and exiting with ``returncode``. A list of outputs gives one per
+    call. What each call got as stdin (subprocess.DEVNULL, or the bytes in its stdin file) is collected
+    in ``mock_popen.stdin_received``."""
+    outputs = list(output) if isinstance(output, list) else None
+    mock_popen.stdin_received = []
+
     def popen(*args, **kwargs):
-        kwargs["stdout"].write(output)
+        stdin = kwargs.get("stdin")
+        mock_popen.stdin_received.append(stdin if stdin is subprocess.DEVNULL else stdin.read())
+        kwargs["stdout"].write(outputs.pop(0) if outputs is not None else output)
         process = MagicMock()
         process.__enter__.return_value = process
         process.__exit__.return_value = False
+        process.wait.return_value = returncode
+        process.returncode = returncode
         return process
 
     mock_popen.side_effect = popen
