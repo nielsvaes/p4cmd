@@ -86,6 +86,9 @@ class P4Client(object):
         :param perforce_root: *string* root of your Perforce workspace. This would also be where your .p4config file is
         :param user: *string* P4USER, if None will be tried to be found automatically
         :param client: *string* P4CLIENT, if None will be tried to be found automatically
+        :param server: *string* P4PORT, if None will be tried to be found automatically. Give the P4PORT p4 itself
+        uses (from the environment or .p4config): p4 isn't given this one, but run_cmd() checks that it can reach it
+        and doesn't run p4 when it can't
         :param max_parallel_connections: *int* max number of connections to use while syncing/submitting. This requires
         the server to have net.parallel.max and net parallel.threads to be > 1
         :param max_wait: *int* seconds of silence from the server after which p4 gives up on a command, see
@@ -116,14 +119,15 @@ class P4Client(object):
             self.user = self.get_p4_setting("P4USER")
             if self.user is None:
                 raise p4errors.WorkSpaceError("Could not find P4USER")
-        if client is None:
-            self.client = self.find_p4_client()
-            if self.client is None:
-                raise p4errors.WorkSpaceError("Could not find P4CLIENT")
+        # P4PORT before P4CLIENT: finding the client can run `p4 clients`, and run_cmd() checks P4PORT first
         if server is None:
             self.server = self.get_p4_setting("P4PORT")
             if self.server is None:
                 raise p4errors.WorkSpaceError("Could not find P4PORT")
+        if client is None:
+            self.client = self.find_p4_client()
+            if self.client is None:
+                raise p4errors.WorkSpaceError("Could not find P4CLIENT")
 
         # `p4 where` comes back empty when the client cannot talk to the
         # server -- most commonly an expired ticket. Indexing [0] blindly
@@ -338,7 +342,8 @@ class P4Client(object):
         """
         if not self.host_online():
             raise p4errors.ServerOffline(f"Can't connect to {self.server}")
-        result = self.run_cmd("login", args=["-s"])
+        # Checked just above: a second check that failed would leave no result to read
+        result = self.run_cmd("login", args=["-s"], online_check=False)
         info_dict = result[0]
         expiration_seconds = self.__get_dict_value(info_dict, "TicketExpiration", None)
         if expiration_seconds is not None:
@@ -417,7 +422,7 @@ class P4Client(object):
         file_list = convert_to_list(file_list)
 
         if self.host_online():
-            fstat_output = self.run_cmd("fstat", args=["-Ol"], file_list=file_list)
+            fstat_output = self.run_cmd("fstat", args=["-Ol"], file_list=file_list, online_check=False)
             p4files = self.fstat_to_p4_files(fstat_output, allow_invalid_files=allow_invalid_files)
             return p4files
         else:
@@ -460,7 +465,7 @@ class P4Client(object):
                 else:
                     folder = folder + "/*"
 
-            fstat_output = self.run_cmd("fstat", args=["-Ol"], file_list=[folder])
+            fstat_output = self.run_cmd("fstat", args=["-Ol"], file_list=[folder], online_check=False)
             p4files = self.fstat_to_p4_files(fstat_output, allow_invalid_files=allow_invalid_files)
             return p4files
 
@@ -1150,8 +1155,13 @@ class P4Client(object):
         :param case_sensitive: *bool*
         :param descriptions: *bool* if set to True, will return the changelist description instead of the changelist number
         :return: *list* with changelist numbers as ints
+        :raises p4errors.ServerOffline: if the server is unreachable
+        :raises p4errors.P4CommandError: if p4 reports an error, like an expired login
         """
-        info_dicts = self.run_cmd("changes", args=["-l", "-s", "pending", "-u", self.user, "-c", self.client])
+        # Raises rather than returning no changelists: "couldn't ask" isn't "there are none", and
+        # get_or_make_changelist() would make a second changelist with the same description
+        info_dicts = self.run_cmd("changes", args=["-l", "-s", "pending", "-u", self.user, "-c", self.client],
+                                  raise_on_errors=True)
         changelists = []
         description_filter = str(description_filter).rstrip("\n")
         if not case_sensitive:
@@ -1196,6 +1206,7 @@ class P4Client(object):
         :param changelist_description: *string*
         :param case_sensitive: *bool*
         :return: *int* changelist number
+        :raises p4errors.ServerOffline: if the server is unreachable
         """
         if not isinstance(changelist_description, str):
             return "default"

@@ -26,6 +26,8 @@ p4 = p4cmd.P4Client("~/p4/MyGame")
 p4 = p4cmd.P4Client("~/p4/MyGame", user="my.user", client="my-workspace", server="ssl:perforce:1666")
 ```
 
+Give `server` as the P4PORT p4 itself uses, from the environment or `.p4config`. p4 isn't given it, but `run_cmd()` checks that it can reach it first and doesn't run p4 when it can't, so a different address, like a short host name that only resolves in the office, stops every command.
+
 ```python
 import os
 from p4cmd import p4cmd
