@@ -36,6 +36,18 @@ p4 = p4cmd.P4Client.from_env()
 
 If the path you pass doesn't contain a `.p4config` file, P4Client will walk up the directory tree until it finds one and use that as `perforce_root`.
 
+### Not hanging on a stalled server
+
+A server that accepts the connection and then stops answering makes a p4 command wait forever. Pass `max_wait` and every command gets `-vnet.maxwait=<seconds>`, so p4 gives up once the server has sent nothing for that long.
+
+```python
+p4 = p4cmd.P4Client("~/p4/MyGame", max_wait=300)  # or p4.set_max_wait(300)
+```
+
+- It counts silence, not total time. A long sync that keeps moving isn't cut off, but a slow query or a submit whose triggers run long is, so pick a generous value: `p4 help usage` uses 300. A submit that was cut off may still finish on the server, so check the changelist before retrying.
+- `run_cmd()` gets the stall as an error dict (`TCP receive exceeded maximum configured duration of 300 seconds.`).
+- A `net.maxwait` in P4CONFIG or P4ENVIRO wins over `max_wait`, even `0`, which means no limit. On an `ssl:` port, a stall during the handshake keeps p4's own limit of about 30 seconds and leaves `run_cmd()` an empty list.
+
 ### Quieting log output
 
 `p4cmd` logs warnings and errors through the standard `logging` module under the `p4cmd` logger. Setting the level on the `p4cmd` parent flows down to all submodules (`p4cmd.p4cmd`, `p4cmd.utils`).
@@ -77,6 +89,7 @@ The old `silent=True` constructor kwarg is deprecated and now a no-op — config
 | `set_workspace(workspace)` | Switch the active workspace |
 | `set_perforce_root(root)` | Change the workspace root directory |
 | `set_max_parallel_connections(value)` | Set max parallel connections for sync/submit (default 4) |
+| `set_max_wait(seconds)` | Give up on a command once the server has sent nothing for this many seconds (default `None`: p4's own behaviour) |
 | `get_all_workspaces()` | List all workspaces for the current user |
 
 ### File operations

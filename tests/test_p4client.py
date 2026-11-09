@@ -938,3 +938,83 @@ def test_init_error_message_mentions_login(tmp_path):
                 )
     message = str(excinfo.value).lower()
     assert "login" in message or "ticket" in message
+
+
+# ---------------------------------------------------------------------------
+# max_wait: -vnet.maxwait on every p4 command
+# ---------------------------------------------------------------------------
+
+def _run_cmd_command(p4client, **run_cmd_kwargs):
+    """The command line run_cmd starts p4 with, with p4 imitated by fake_p4_popen."""
+    with patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen:
+        fake_p4_popen(mock_popen)
+        p4client.run_cmd("info", online_check=False, **run_cmd_kwargs)
+    return mock_popen.call_args.args[0]
+
+
+def test_max_wait_off_by_default_keeps_command_lines(p4client):
+    assert p4client.max_wait is None
+    assert _run_cmd_command(p4client).startswith("p4 -G -u testuser -c testclient info ")
+    assert _run_cmd_command(p4client, marshal_output=False).startswith("p4 info ")
+
+
+@pytest.mark.parametrize("marshal_output, start", [
+    (True, "p4 -vnet.maxwait=30 -G -u testuser -c testclient info "),
+    (False, "p4 -vnet.maxwait=30 info "),
+])
+def test_run_cmd_passes_max_wait(p4client, marshal_output, start):
+    p4client.set_max_wait(30)
+    assert _run_cmd_command(p4client, marshal_output=marshal_output).startswith(start)
+
+
+@pytest.mark.parametrize("value", [0, -1, 2147483648, 0.5, 30.0, True, "30"])
+def test_set_max_wait_rejects_anything_but_an_int_in_range(p4client, value):
+    """p4 reads values under 1 as no limit and wraps those from 2**31 around; the rest aren't ints."""
+    with pytest.raises(ValueError):
+        p4client.set_max_wait(value)
+
+
+def test_init_commands_pass_max_wait(tmp_path):
+    """Every command the constructor runs has the limit: p4 set and p4 clients to find the client, then p4 where."""
+    import marshal
+    (tmp_path / ".p4config").write_text("P4PORT=ssl:perforce.example.com:1666\n")
+    outputs = [
+        b"",  # p4 set P4CLIENT: not set
+        marshal.dumps({b"client": b"testclient"}),  # p4 clients -u testuser
+        marshal.dumps({b"depotFile": b"//depot/project/...", b"path": b"/fake/project/..."}),  # p4 where
+    ]
+    with patch.object(P4Client, "host_online", return_value=True), \
+         patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen:
+        fake_p4_popen(mock_popen, outputs)
+        client = P4Client(str(tmp_path), user="testuser", server="ssl:perforce.example.com:1666", max_wait=10)
+    commands = [c.args[0] for c in mock_popen.call_args_list]
+    assert all(command.startswith("p4 -vnet.maxwait=10 ") for command in commands), commands
+    assert len(commands) == 3
+    assert " set P4CLIENT " in commands[0] and " clients -u testuser " in commands[1] and " where " in commands[2]
+    assert client.client == "testclient"
+    assert client.depot_root == "//depot/project"
+
+
+def test_make_new_changelist_passes_max_wait(p4client):
+    """Both of make_new_changelist's commands get the limit."""
+    p4client.set_max_wait(30)
+    template = b"Change: new\n\nDescription:\n\t<enter description here>\n\nFiles:\n"
+    with patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen, \
+         patch.object(p4client, "host_online", return_value=True):
+        fake_p4_popen(mock_popen, [template, b"Change 12345 created.\n"])
+        assert p4client.make_new_changelist("test description") == 12345
+    commands = [c.args[0] for c in mock_popen.call_args_list]
+    assert len(commands) == 2
+    assert all(command.startswith("p4 -vnet.maxwait=30 -u testuser -c testclient ") for command in commands)
+
+
+def test_update_changelist_description_passes_max_wait(p4client):
+    """Both of update_changelist_description's commands get the limit."""
+    p4client.set_max_wait(30)
+    template = b"Change: 123\n\nDescription:\n\told\n\nFiles:\n"
+    with patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen:
+        fake_p4_popen(mock_popen, [template, b"Change 123 updated.\n"])
+        assert p4client.update_changelist_description(123, "new") is True
+    commands = [c.args[0] for c in mock_popen.call_args_list]
+    assert len(commands) == 2
+    assert all(command.startswith("p4 -vnet.maxwait=30 -u testuser -c testclient ") for command in commands)

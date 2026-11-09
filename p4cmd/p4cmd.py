@@ -56,7 +56,8 @@ def _run_command(command, cwd, input=None, stderr=None, check=False):
 
 
 class P4Client(object):
-    def __init__(self, perforce_root, user=None, client=None, server=None, silent=None, max_parallel_connections=4):
+    def __init__(self, perforce_root, user=None, client=None, server=None, silent=None, max_parallel_connections=4,
+                 max_wait=None):
         """
         Make a new P4Client
 
@@ -65,6 +66,8 @@ class P4Client(object):
         :param client: *string* P4CLIENT, if None will be tried to be found automatically
         :param max_parallel_connections: *int* max number of connections to use while syncing/submitting. This requires
         the server to have net.parallel.max and net parallel.threads to be > 1
+        :param max_wait: *int* seconds of silence from the server after which p4 gives up on a command, see
+        set_max_wait(). None (default) sets no limit
         :param silent: *deprecated* — no-op. To quiet output, configure the ``p4cmd`` logger, e.g.
         ``logging.getLogger("p4cmd").setLevel(logging.CRITICAL)``.
         """
@@ -79,6 +82,7 @@ class P4Client(object):
         self.perforce_root = perforce_root
 
         self.max_parallel_connections = max_parallel_connections
+        self.set_max_wait(max_wait)
         self.user = user
         self.client = client
         self.server = server
@@ -145,6 +149,20 @@ class P4Client(object):
         """
         self.max_parallel_connections = value
 
+    def set_max_wait(self, seconds):
+        """
+        Give up on a p4 command once the server has sent nothing for this many seconds, by passing ``-vnet.maxwait``
+        to every command. It counts silence, not total time, so pick a generous value, like 300 (see the README).
+
+        :param seconds: *int* from 1 to 2147483647, or *None* for no limit
+        :return:
+        :raises ValueError: for anything else
+        """
+        # Outside this range p4 reads the value as no limit, or wraps it around
+        if seconds is not None and (type(seconds) is not int or not 1 <= seconds <= 2147483647):
+            raise ValueError(f"max_wait must be a whole number of seconds from 1 to 2147483647, or None: got {seconds!r}")
+        self.max_wait = seconds
+
     def run_cmd(self, cmd, args=None, file_list=None, marshal_output=True, online_check=True, raise_on_errors=False, **kwargs):
         """
         Reads the output stream of the command and returns it as a list of dicts.
@@ -196,9 +214,9 @@ class P4Client(object):
         for clamped_arg in clamped_arg_list:
             for clamped_files in clamped_file_list:
                 if marshal_output:
-                    command = f"p4 -G -u {self.user} -c {self.client} {cmd} {clamped_arg} {clamped_files}"
+                    command = f"{self.__p4_prefix()} -G -u {self.user} -c {self.client} {cmd} {clamped_arg} {clamped_files}"
                 else:
-                    command = f"p4 {cmd} {clamped_arg} {clamped_files}"
+                    command = f"{self.__p4_prefix()} {cmd} {clamped_arg} {clamped_files}"
 
                 if len(command) > MAX_CMD_LEN:
                     # This shouldn't happen, but just in case the command prefix end up really long
@@ -444,7 +462,7 @@ class P4Client(object):
             raise p4errors.ServerOffline("Can't connect to %s on port %s" % (self.__server_address(), self.__port_number()))
 
         template = _run_command(
-            f'p4 -u {self.user} -c {self.client} --field "Files=" change -o',
+            f'{self.__p4_prefix()} -u {self.user} -c {self.client} --field "Files=" change -o',
             self.perforce_root,
             stderr=subprocess.STDOUT,
             check=True).decode()
@@ -452,7 +470,7 @@ class P4Client(object):
         modified = self.__replace_description_in_template(template, description)
 
         output = _run_command(
-            f"p4 -u {self.user} -c {self.client} change -i",
+            f"{self.__p4_prefix()} -u {self.user} -c {self.client} change -i",
             self.perforce_root,
             input=modified.encode(),
             stderr=subprocess.STDOUT,
@@ -502,14 +520,14 @@ class P4Client(object):
             changelist = self.__ensure_changelist(changelist)
 
             template = _run_command(
-                f'p4 -u {self.user} -c {self.client} change -o {changelist}',
+                f'{self.__p4_prefix()} -u {self.user} -c {self.client} change -o {changelist}',
                 self.perforce_root,
                 check=True).decode()
 
             modified = self.__replace_description_in_template(template, new_description)
 
             _run_command(
-                f'p4 -u {self.user} -c {self.client} change -i',
+                f'{self.__p4_prefix()} -u {self.user} -c {self.client} change -i',
                 self.perforce_root,
                 input=modified.encode(),
                 check=True)
@@ -1266,6 +1284,16 @@ class P4Client(object):
         except OSError as e:
             _log.warning(f"oserror: {e.strerror or e}")
             return False
+
+    def __p4_prefix(self):
+        """
+        The start of every p4 command line: ``p4`` and the global options set on this client.
+
+        :return: *string*
+        """
+        if self.max_wait is None:
+            return "p4"
+        return f"p4 -vnet.maxwait={self.max_wait}"
 
     def __server_address(self):
         """
