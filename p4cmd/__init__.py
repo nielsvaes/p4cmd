@@ -1,4 +1,4 @@
-VERSION = "2.11.3"
+VERSION = "2.12.0"
 
 from .p4cmd import P4Client
 from .p4file import P4File
