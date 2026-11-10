@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from p4cmd.p4cmd import P4Client, _p4port_address, _run_command
-from p4cmd.p4errors import P4CommandError, ServerOffline, WorkSpaceError
+from p4cmd.p4errors import P4cmdError, P4CommandError, ServerOffline, WorkSpaceError
 from p4cmd.p4file import P4File, Status
 from tests.conftest import fake_p4_popen, make_fstat_dict
 
@@ -649,6 +649,79 @@ def test_changelist_exists_description_not_found(p4client):
         return_value=["default"]
     ):
         assert p4client.changelist_exists("Nonexistent task") is False
+
+
+# ---------------------------------------------------------------------------
+# delete_changelist
+# ---------------------------------------------------------------------------
+
+def _pending_changes(*changes):
+    """`p4 -G changes` output for (number, description) pairs."""
+    import marshal
+    return b"".join(marshal.dumps(make_fstat_dict(change=str(num), desc=f"{desc}\n")) for num, desc in changes)
+
+
+# The user's pending changelists: 1454495, and 123 whose description is made of digits
+PENDING = _pending_changes((1454495, "Test"), (123, "4512"))
+
+
+def _delete_changelist_commands(p4client, changelist, output=PENDING, raises=None, **kwargs):
+    """The p4 command lines delete_changelist runs, with p4 itself faked."""
+    from contextlib import nullcontext
+    with patch.object(p4client, "host_online", return_value=True), \
+         patch("p4cmd.p4cmd.subprocess.Popen") as mock_popen:
+        fake_p4_popen(mock_popen, output)
+        with pytest.raises(raises) if raises else nullcontext():
+            p4client.delete_changelist(changelist, **kwargs)
+    return [c.args[0] for c in mock_popen.call_args_list]
+
+
+def _deleted(commands):
+    """The changelists the commands ran `p4 change -d` on."""
+    return [c.split("change -d ")[1].split()[0] for c in commands if "change -d " in c]
+
+
+@pytest.mark.parametrize("changelist", [1454495, "1454495", b"1454495"])
+def test_delete_changelist_number_deletes_that_changelist(p4client, changelist):
+    """A number was taken as a description filter, matched nothing and ran `change -d default`."""
+    assert _deleted(_delete_changelist_commands(p4client, changelist)) == ["1454495"]
+
+
+def test_delete_changelist_obliterate_never_reverts_default(p4client):
+    """obliterate=True with a number ran `revert -c default //...`, reverting the user's default changelist."""
+    commands = _delete_changelist_commands(p4client, 1454495, obliterate=True)
+    assert any("revert -c 1454495" in c for c in commands)
+    assert not any("default" in c for c in commands)
+
+
+def test_delete_changelist_obliterate_unknown_number_reverts_nothing(p4client):
+    """A number that isn't one of the user's pending changelists, like a typo, raises before any revert."""
+    commands = _delete_changelist_commands(p4client, 1454459, raises=P4cmdError, obliterate=True)
+    assert not any("revert" in c for c in commands)
+    assert _deleted(commands) == []
+
+
+def test_delete_changelist_description_deletes_matches(p4client):
+    """A description made of digits that isn't a pending changelist's number still matches descriptions."""
+    assert _deleted(_delete_changelist_commands(p4client, "4512")) == ["123"]
+
+
+def test_delete_changelist_unmatched_description_never_touches_default(p4client):
+    commands = _delete_changelist_commands(p4client, "Export", obliterate=True)
+    assert not any("default" in c for c in commands)
+    assert _deleted(commands) == []
+
+
+@pytest.mark.parametrize("changelist", ["", "\n"])
+def test_delete_changelist_empty_description_deletes_nothing(p4client, changelist):
+    """An empty description matches every pending changelist."""
+    assert _delete_changelist_commands(p4client, changelist, raises=ValueError, obliterate=True) == []
+
+
+def test_delete_changelist_raises_when_p4_cannot_delete(p4client):
+    import marshal
+    error = marshal.dumps({b"code": b"error", b"data": b"Change 1454495 has 1 open file(s) associated with it.\n"})
+    _delete_changelist_commands(p4client, 1454495, output=[PENDING, error], raises=P4CommandError)
 
 
 # ---------------------------------------------------------------------------
